@@ -1,0 +1,16 @@
+{
+  "dependencies": [
+    {
+      "name": "examplepkg",
+      "version": "1.0.0",
+      "vulns": [
+        {
+          "id": "PYSEC-2026-1",
+          "aliases": ["CVE-2026-12345", "GHSA-abcd-efgh-ijkl"],
+          "description": "Example vulnerable dependency fixture.",
+          "fix_versions": ["1.0.1"]
+        }
+      ]
+    }
+  ]
+}

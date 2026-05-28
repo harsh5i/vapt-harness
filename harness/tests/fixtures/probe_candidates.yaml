@@ -1,0 +1,158 @@
+target:
+  id: probe-fixture
+  name: Captive probe fixture
+  source_path: .
+candidates:
+  websocket_authz_drift:
+    id: FIX-WS-001
+    title: Websocket event leaks private channel attribute after REST API denies access
+    surface: realtime websocket event broadcast
+    sink: ShouldSendEvent websocket payload
+    weakness: CWE-862
+    proof: passed
+    negative_controls: denied REST API read returns 403 for the same private channel
+  serialization_rce:
+    id: FIX-SER-001
+    title: Trusted allowlist bypass in serialization load reaches pickle gadget
+    surface: model deserialize load
+    sink: trusted allowlist object reconstruction
+    weakness: CWE-502
+    root_cause: trusted type allowlist validates display name but loader imports attacker controlled class
+    impact: code execution during load
+    proof: passed
+    negative_controls: benign load succeeds and denied untrusted class load fails
+  ssrf_outbound:
+    id: FIX-SSRF-001
+    title: Registry URL SSRF reaches captive HTTP listener
+    surface: model registry pull URL
+    entrypoint: pull request accepts attacker controlled registry host URL
+    sink: http client request
+    attacker_control: URL host and path
+    weakness: CWE-918
+    proof: passed
+    safety_notes: captive listener only, no third-party scanning
+  parser_canonicalization:
+    id: FIX-PARSE-001
+    title: Archive path canonicalization mismatch permits traversal write
+    surface: archive parser normalize path
+    sink: decoded filesystem path write
+    weakness: CWE-22
+    root_cause: checked normalized path differs from decoded sink representation
+    impact: file write outside extraction directory
+    proof: passed
+    negative_controls: benign normalized archive member remains inside destination
+  prompt_injection_to_tool:
+    id: FIX-PROMPT-001
+    title: Prompt injection causes agent tool file read
+    surface: RAG agent prompt tool boundary
+    sink: function_call file read tool
+    weakness: CWE-94
+    root_cause: untrusted retrieved prompt is allowed to select privileged tool
+    impact: unauthorized file exfil through tool output
+    proof: passed
+    negative_controls: benign prompt does not invoke file read tool
+  idor_diff:
+    id: FIX-IDOR-001
+    title: IDOR authorization bypass returns another tenant object
+    surface: team object REST API
+    entrypoint: GET /api/object/{object id}
+    sink: permission check uses requester team but not object owner
+    weakness: CWE-639
+    attacker_control: object id
+    root_cause: authorization check omits owner comparison
+    impact: cross-tenant object disclosure
+    proof: passed
+    negative_controls: owner request succeeds, non-owner forbidden control returns 403 after patched check
+  rag_poisoning_durability:
+    id: FIX-RAG-001
+    title: Durable RAG index poisoning triggers unauthorized tool write
+    surface: retrieval embedding index ingestion
+    entrypoint: uploaded document is embedded into vector index
+    sink: agent tool write call from retrieved context
+    weakness: CWE-20
+    attacker_control: poisoned document stored in index
+    root_cause: retrieved untrusted document persists across reload and can steer tool selection
+    impact: unauthorized file write
+    proof: passed
+    negative_controls: clean index benign document before poison does not trigger tool use
+  model_card_local_file_read:
+    id: FIX-CARD-001
+    title: Model card template include reads local file during rendering
+    surface: model card markdown yaml template rendering
+    entrypoint: model card metadata field
+    sink: template include local file read path
+    weakness: CWE-200
+    attacker_control: template path in model card metadata
+    root_cause: renderer expands untrusted include path
+    impact: local file disclosure
+    proof: passed
+    negative_controls: benign template renders and missing file negative control is denied
+  unauth_secret_config:
+    id: FIX-CONFIG-001
+    title: Unauthenticated runtime config response serializes API key token fields
+    surface: REST API runtime settings endpoint
+    entrypoint: GET /api/runtime_config without Authorization header
+    sink: response DTO serializes config JSON fields
+    weakness: CWE-200
+    attacker_control: anonymous HTTP request to settings endpoint
+    root_cause: missing auth dependency on config read route returns secret-bearing response model
+    impact: API key and bearer token credential disclosure
+    proof: passed
+    negative_controls: admin-gated write endpoint is protected and alternate config endpoint returns masked redacted values
+  relative_file_write_to_code_load:
+    id: FIX-WRITE-RCE-001
+    title: Low-privileged relative download file write plants plugin code for reload execution
+    surface: REST API download endpoint to plugin loader
+    entrypoint: POST /api/download with relative cwd destination
+    sink: file write creates plugin __init__.py and reload imports it
+    weakness: CWE-434
+    attacker_control: authenticated regular user controls URL and relative destination path
+    root_cause: destination validation rejects absolute paths but does not anchor writes to a safe cache root
+    impact: custom node plugin import causes code execution on server reload
+    exploitability: proof captures cwd, planted file path, and custom node import execution marker
+    proof: passed
+    negative_controls: absolute path and .. are rejected; existing files are not clobbered; admin reload is protected
+  workflow_node_local_file_read:
+    id: FIX-WORKFLOW-LFR-001
+    title: Regular user workflow node reads arbitrary local file and serializes output
+    surface: workflow graph invocation node execution
+    entrypoint: POST /api/queue/enqueue_batch then GET /api/queue/item
+    sink: open(file_path) file read returns node output in queue item results
+    weakness: CWE-200
+    attacker_control: authenticated non-admin regular user controls file_path in workflow node
+    trust_boundary: user-submitted workflow graph crosses into server-local filesystem read
+    root_cause: default-enabled node accepts local filesystem paths without constraining them to managed uploads or safe root
+    impact: local file disclosure through serialized workflow result output
+    exploitability: proof executes node and fetches owner-visible queue item result
+    variant_analysis: review allowlist and denylist default behavior for path-taking workflow nodes
+    proof: passed
+    negative_controls: missing file denied; node can be denylisted; owner-only result sanitization checked; binary utf-8 limits documented
+  queue_job_secret_leak:
+    id: FIX-QUEUE-SECRET-001
+    title: Download queue job list exposes bearer token across users
+    surface: global queue job REST API
+    entrypoint: GET /api/download_queue and GET /api/download_queue/i/{id}
+    sink: response serialization model_dump includes access_token credential
+    weakness: CWE-200
+    attacker_control: authenticated non-admin regular user can list or get unscoped global job state
+    trust_boundary: regular user crosses into cross-user credential-bearing queue job state
+    root_cause: queue job responses serialize secret fields without owner filtering or redaction
+    impact: cross-user bearer token credential disclosure for private model downloads
+    exploitability: proof serializes a job with bearer token and verifies missing ownership filtering in list/get routes
+    proof: passed
+    negative_controls: admin prune route remains admin-only; owner-scoped filter and token redaction are absent from vulnerable list/get paths
+  deserialization_handle_path_control:
+    id: FIX-DESER-HANDLE-001
+    title: Workflow object handle controls absolute path passed to torch.load
+    surface: workflow graph API object handle resolution
+    entrypoint: POST /api/queue/enqueue_batch with attacker-controlled tensor handle
+    sink: torch.load deserialization of file resolved from handle name
+    weakness: CWE-502
+    attacker_control: authenticated regular user controls object handle name and can plant attacker-controlled file through upload/download
+    trust_boundary: user-supplied object handle crosses into server filesystem deserialization
+    root_cause: handle-to-path resolution lacks safe root anchoring, canonicalization, and generated-name validation
+    impact: code execution if unsafe pickle loading is reachable, or sensitive file/model data exposure if safe loading accepts attacker-selected files
+    exploitability: proof chains attacker file write to absolute path handle and reaches the deserialization sink
+    variant_analysis: check tensor stores, conditioning stores, model caches, artifact stores, and job resume markers for handle-to-path loading
+    proof: passed
+    negative_controls: weights_only safe loading, picklescan allowlist, missing file behavior, and non-model file errors are verified

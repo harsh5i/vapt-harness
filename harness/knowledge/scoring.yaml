@@ -1,0 +1,21 @@
+version: 1
+report_ready_threshold: 85
+weights:
+  attacker_control: 10
+  entrypoint: 10
+  trust_boundary: 10
+  sink: 10
+  impact: 10
+  negative_controls: 10
+  root_cause: 10
+  variant_analysis: 8
+  patch_diff: 6
+  valid_cvss: 4
+  valid_cwe: 4
+  proof_passed: 15
+  latest_affected: 8
+  novelty: 8
+caps:
+  proof_not_passed: 84
+  latest_not_confirmed: 80
+  novelty_unchecked_or_duplicate: 76

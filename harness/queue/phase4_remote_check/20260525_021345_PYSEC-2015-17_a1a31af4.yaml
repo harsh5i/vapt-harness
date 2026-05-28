@@ -1,0 +1,112 @@
+type: advisory
+source_kind: osv_advisories
+source_key: osv_advisories|||requests|PyPI|
+ref: PYSEC-2015-17
+remote: true
+advisory:
+  id: PYSEC-2015-17
+  details: The resolve_redirects function in sessions.py in requests 2.1.0 through
+    2.5.3 allows remote attackers to conduct session fixation attacks via a cookie
+    without a host value in a redirect.
+  aliases:
+  - CVE-2015-2296
+  - GHSA-pg2w-x9wp-vw92
+  modified: '2023-11-08T03:57:51.982387Z'
+  published: '2015-03-18T16:59:00Z'
+  references:
+  - type: WEB
+    url: http://www.openwall.com/lists/oss-security/2015/03/15/1
+  - type: ADVISORY
+    url: http://www.ubuntu.com/usn/USN-2531-1
+  - type: WEB
+    url: http://www.openwall.com/lists/oss-security/2015/03/14/4
+  - type: FIX
+    url: https://github.com/kennethreitz/requests/commit/3bd8afbff29e50b38f889b2f688785a669b9aafc
+  - type: WEB
+    url: https://warehouse.python.org/project/requests/2.6.0/
+  - type: WEB
+    url: http://lists.fedoraproject.org/pipermail/package-announce/2015-March/153594.html
+  - type: ADVISORY
+    url: http://advisories.mageia.org/MGASA-2015-0120.html
+  - type: ADVISORY
+    url: http://www.mandriva.com/security/advisories?name=MDVSA-2015:133
+  affected:
+  - package:
+      name: requests
+      ecosystem: PyPI
+      purl: pkg:pypi/requests
+    ranges:
+    - &id001
+      type: GIT
+      repo: https://github.com/kennethreitz/requests
+      events:
+      - introduced: '0'
+      - fixed: 3bd8afbff29e50b38f889b2f688785a669b9aafc
+    - &id002
+      type: ECOSYSTEM
+      events:
+      - introduced: 2.1.0
+      - fixed: 2.6.0
+    versions:
+    - 2.1.0
+    - 2.2.0
+    - 2.2.1
+    - 2.3.0
+    - 2.4.0
+    - 2.4.1
+    - 2.4.2
+    - 2.4.3
+    - 2.5.0
+    - 2.5.1
+    - 2.5.2
+    - 2.5.3
+    database_specific:
+      source: https://github.com/pypa/advisory-database/blob/main/vulns/requests/PYSEC-2015-17.yaml
+  schema_version: 1.7.3
+affected:
+  packages:
+  - pkg:pypi/requests
+  - requests
+  ecosystems:
+  - pypi
+  cwes: []
+  affected_versions:
+  - 2.1.0
+  - 2.2.0
+  - 2.2.1
+  - 2.3.0
+  - 2.4.0
+  - 2.4.1
+  - 2.4.2
+  - 2.4.3
+  - 2.5.0
+  - 2.5.1
+  - 2.5.2
+  - 2.5.3
+  ranges:
+  - *id001
+  - *id002
+match_reasons:
+- package:requests
+- ecosystem:pypi
+patch_enrichment:
+  available: false
+  reason: no local repo_path for patch enrichment
+candidate_seeds:
+- title: Review PYSEC-2015-17 for regression or affected-version correction
+  surface: The resolve_redirects function in sessions.py in requests 2.1.0 through
+    2.5.3 allows remote attackers to conduct session fixation attacks via a cookie
+    without a host value in a redirect.
+  weakness: possible-regression
+  novelty: possible-regression
+  dedup: advisory-known
+  next_action: Cross-reference affected package/version and patch diff before candidate
+    promotion.
+schema_version: 1
+queue_id: phase4_remote_check/20260525_021345_PYSEC-2015-17_a1a31af4
+target_id: phase4_remote_check
+status: pending
+created_at: '2026-05-25T02:13:45'
+history:
+- at: '2026-05-25T02:13:45'
+  event: queued

@@ -1,0 +1,1 @@
+{"DetectorName":"AWS","Verified":true,"SourceName":"filesystem","SourceMetadata":{"Data":{"Filesystem":{"file":"sample/.env","line":4}}}}

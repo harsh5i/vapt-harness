@@ -1,0 +1,61 @@
+rules:
+  - id: python-open-variable-path
+    languages: [python]
+    severity: WARNING
+    message: "Variable-controlled file open; verify caller control, path canonicalization, safe root anchoring, and output exposure."
+    patterns:
+      - pattern-either:
+          - pattern: open($PATH, ...)
+          - pattern: $PATH.open(...)
+      - metavariable-regex:
+          metavariable: $PATH
+          regex: "^[a-zA-Z_][a-zA-Z0-9_\\.]*$"
+
+  - id: python-subprocess-variable-command
+    languages: [python]
+    severity: WARNING
+    message: "Variable-controlled subprocess execution; verify shell usage, argv construction, attacker control, cwd, and environment."
+    patterns:
+      - pattern-either:
+          - pattern: subprocess.run($CMD, ...)
+          - pattern: subprocess.Popen($CMD, ...)
+          - pattern: subprocess.call($CMD, ...)
+          - pattern: subprocess.check_call($CMD, ...)
+          - pattern: subprocess.check_output($CMD, ...)
+      - metavariable-regex:
+          metavariable: $CMD
+          regex: "^[a-zA-Z_][a-zA-Z0-9_\\.]*$"
+
+  - id: python-dynamic-import-exec-module
+    languages: [python]
+    severity: WARNING
+    message: "Dynamic import executes module code; verify source path trust, write primitives into the import path, and reload/startup triggers."
+    pattern: $LOADER.exec_module($MODULE)
+
+  - id: python-http-request-variable-url
+    languages: [python]
+    severity: WARNING
+    message: "Variable-controlled outbound HTTP request; verify SSRF controls, redirects, schemes, credentials, and private network restrictions."
+    patterns:
+      - pattern-either:
+          - pattern: requests.get($URL, ...)
+          - pattern: requests.post($URL, ...)
+          - pattern: requests.request(..., $URL, ...)
+          - pattern: httpx.get($URL, ...)
+          - pattern: httpx.post($URL, ...)
+          - pattern: httpx.request(..., $URL, ...)
+      - metavariable-regex:
+          metavariable: $URL
+          regex: "^[a-zA-Z_][a-zA-Z0-9_\\.]*$"
+
+  - id: python-unsafe-deserialization-load
+    languages: [python]
+    severity: WARNING
+    message: "Potential unsafe deserialization/model load; verify trusted source, safe format, allowlist, and sandboxing."
+    pattern-either:
+      - pattern: pickle.load(...)
+      - pattern: pickle.loads(...)
+      - pattern: torch.load(...)
+      - pattern: dill.load(...)
+      - pattern: dill.loads(...)
+      - pattern: joblib.load(...)

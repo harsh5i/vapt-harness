@@ -1,0 +1,82 @@
+type: advisory
+source_kind: osv_advisories
+source_key: osv_advisories|vapt/harness/tests/results/phase4_check_repo||phase4-fixture|PyPI|vapt/harness/tests/fixtures/advisories/osv_phase4_sample.json
+ref: OSV-PHASE4-b68eec0e
+advisory:
+  id: OSV-PHASE4-b68eec0e
+  package: phase4-fixture
+  ecosystem: PyPI
+  summary: Fixture advisory with fixed commit for patch-window enrichment
+  cwe: CWE-863
+  fixed_commit: b68eec0e87fc15ec09c9f354cb5bd6e687b45c9b
+affected:
+  packages:
+  - phase4-fixture
+  ecosystems:
+  - pypi
+  cwes:
+  - CWE-863
+  affected_versions: []
+  ranges: []
+match_reasons:
+- package:phase4-fixture
+- ecosystem:pypi
+patch_enrichment:
+  available: true
+  repo_path: vapt/harness/tests/results/phase4_check_repo
+  range: dcdb4504238e578f9b886d44fee861739eeaaacc..b68eec0e87fc15ec09c9f354cb5bd6e687b45c9b
+  paths: []
+  changed_files:
+  - "M\tapp.py"
+  matched_patterns:
+  - pattern: authz
+    lines:
+    - '     # authz token and requests.get SSRF review fixture'
+    - '     # authz token and requests.get SSRF review fixture'
+    - '     # authz token and requests.get SSRF review fixture'
+    - '     # authz token and requests.get SSRF review fixture'
+    - '+    # authz token and requests.get SSRF review fixture'
+  - pattern: token
+    lines:
+    - '@@ -33,20 +33,25 @@ def fetch_profile(url, token):'
+    - ' def fetch_profile(url, token):'
+    - '     # authz token and requests.get SSRF review fixture'
+    - '     return requests.get(url, headers={''Authorization'': token})'
+    - ' def fetch_profile(url, token):'
+    - '     # authz token and requests.get SSRF review fixture'
+    - '     return requests.get(url, headers={''Authorization'': token})'
+    - ' def fetch_profile(url, token):'
+    - '     # authz token and requests.get SSRF review fixture'
+    - '     return requests.get(url, headers={''Authorization'': token})'
+  diff_hunks: "diff --git a/app.py b/app.py\nindex 5fbaa6d..f024d35 100644\n--- a/app.py\n\
+    +++ b/app.py\n@@ -33,20 +33,25 @@ def fetch_profile(url, token):\n \n \n def fetch_profile(url,\
+    \ token):\n     # authz token and requests.get SSRF review fixture\n     return\
+    \ requests.get(url, headers={'Authorization': token})\n \n \n def fetch_profile(url,\
+    \ token):\n     # authz token and requests.get SSRF review fixture\n     return\
+    \ requests.get(url, headers={'Authorization': token})\n \n \n def fetch_profile(url,\
+    \ token):\n     # authz token and requests.get SSRF review fixture\n     return\
+    \ requests.get(url, headers={'Authorization': token})\n \n \n def fetch_profile(url,\
+    \ token):\n     # authz token and requests.get SSRF review fixture\n     return\
+    \ requests.get(url, headers={'Authorization': token})\n+\n+\n+def fetch_profile(url,\
+    \ token):\n+    # authz token and requests.get SSRF review fixture\n+    return\
+    \ requests.get(url, headers={'Authorization': token})\n"
+  stderr: ''
+matched_patterns:
+- pattern: authz_boundary
+  lines: []
+candidate_seeds:
+- title: Review OSV-PHASE4-b68eec0e for regression or affected-version correction
+  surface: Fixture advisory with fixed commit for patch-window enrichment
+  weakness: CWE-863
+  novelty: possible-regression
+  dedup: advisory-known
+  next_action: Cross-reference affected package/version and patch diff before candidate
+    promotion.
+schema_version: 1
+queue_id: harness-fixture/20260526_193213_OSV-PHASE4-b68eec0e_3126f1f7
+target_id: harness-fixture
+status: pending
+created_at: '2026-05-26T19:32:13'
+history:
+- at: '2026-05-26T19:32:13'
+  event: queued

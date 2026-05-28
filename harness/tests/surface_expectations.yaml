@@ -1,0 +1,15 @@
+categories:
+  deserialization:
+    min_hits: 2
+  command_execution:
+    min_hits: 3
+  network_ssrf:
+    min_hits: 3
+  path_traversal:
+    min_hits: 1
+  template_injection:
+    min_hits: 1
+  authz_boundary:
+    min_hits: 2
+  realtime_websocket:
+    min_hits: 2

@@ -1,0 +1,20 @@
+type: commits
+source_kind: github_commits
+source_key: github_commits|octocat/Hello-World|master|||
+ref: 7fd1a60b01f91b314f59955a4e4d4e80d8edf11d
+previous_ref: ''
+remote: true
+candidate_seeds:
+- title: Review fresh github_commits event 7fd1a60b01f91b314f59955a4e4d4e80d8edf11d
+  surface: octocat/Hello-World
+  weakness: TBD
+  novelty: fresh-watch-event
+  next_action: Fetch local source, patch-diff, dedup, and prove before promotion.
+schema_version: 1
+queue_id: phase4_remote_check/20260525_021343_7fd1a60b01f91b314f59955a4e4d4e80d8edf11d_d3907c9c
+target_id: phase4_remote_check
+status: pending
+created_at: '2026-05-25T02:13:43'
+history:
+- at: '2026-05-25T02:13:43'
+  event: queued

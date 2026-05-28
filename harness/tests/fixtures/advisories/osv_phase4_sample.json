@@ -1,0 +1,19 @@
+{
+  "vulns": [
+    {
+      "id": "OSV-PHASE4-0001",
+      "package": "phase4-fixture",
+      "ecosystem": "PyPI",
+      "summary": "Fixture advisory for watch queue regression testing",
+      "cwe": "CWE-863"
+    },
+    {
+      "id": "OSV-PHASE4-b68eec0e",
+      "package": "phase4-fixture",
+      "ecosystem": "PyPI",
+      "summary": "Fixture advisory with fixed commit for patch-window enrichment",
+      "cwe": "CWE-863",
+      "fixed_commit": "b68eec0e87fc15ec09c9f354cb5bd6e687b45c9b"
+    }
+  ]
+}

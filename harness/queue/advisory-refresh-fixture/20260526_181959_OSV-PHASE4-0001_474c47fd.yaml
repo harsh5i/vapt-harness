@@ -1,0 +1,44 @@
+type: advisory
+source_kind: osv_advisories
+source_key: osv_advisories|vapt/harness/tests/results/phase4_check_repo||phase4-fixture|PyPI|vapt/harness/tests/fixtures/advisories/osv_phase4_sample.json
+ref: OSV-PHASE4-0001
+advisory:
+  id: OSV-PHASE4-0001
+  package: phase4-fixture
+  ecosystem: PyPI
+  summary: Fixture advisory for watch queue regression testing
+  cwe: CWE-863
+affected:
+  packages:
+  - phase4-fixture
+  ecosystems:
+  - pypi
+  cwes:
+  - CWE-863
+  affected_versions: []
+  ranges: []
+match_reasons:
+- package:phase4-fixture
+- ecosystem:pypi
+patch_enrichment:
+  available: false
+  reason: advisory did not include patch_range or fixed_commit
+matched_patterns:
+- pattern: authz_boundary
+  lines: []
+candidate_seeds:
+- title: Review OSV-PHASE4-0001 for regression or affected-version correction
+  surface: Fixture advisory for watch queue regression testing
+  weakness: CWE-863
+  novelty: possible-regression
+  dedup: advisory-known
+  next_action: Cross-reference affected package/version and patch diff before candidate
+    promotion.
+schema_version: 1
+queue_id: advisory-refresh-fixture/20260526_181959_OSV-PHASE4-0001_474c47fd
+target_id: advisory-refresh-fixture
+status: pending
+created_at: '2026-05-26T18:19:59'
+history:
+- at: '2026-05-26T18:19:59'
+  event: queued

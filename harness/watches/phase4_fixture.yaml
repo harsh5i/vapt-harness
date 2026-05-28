@@ -1,0 +1,16 @@
+target_id: phase4_fixture
+repo_path: vapt/harness/tests/results/phase4_check_repo
+poll_interval_minutes: 1
+trigger_patterns:
+- authz_boundary
+- network_ssrf
+sources:
+- kind: github_commits
+  repo_path: vapt/harness/tests/results/phase4_check_repo
+  branch: HEAD
+  paths:
+  - app.py
+- kind: osv_advisories
+  ecosystem: PyPI
+  package: phase4-fixture
+  fixture: vapt/harness/tests/fixtures/advisories/osv_phase4_sample.json

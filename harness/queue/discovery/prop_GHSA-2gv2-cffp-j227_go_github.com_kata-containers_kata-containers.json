@@ -1,0 +1,18 @@
+{
+  "ghsa_id": "GHSA-2gv2-cffp-j227",
+  "cves": [
+    "CVE-2026-47243"
+  ],
+  "severity": "high",
+  "published": "2026-05-27T22:50:01Z",
+  "ecosystem": "go",
+  "package": "github.com/kata-containers/kata-containers",
+  "vulnerable_range": "< 0.0.0-20260519062212-ffa59ce3aa78",
+  "summary": "Kata guest escape: runtime-rs guest-root to host-root escape via virtiofs",
+  "html_url": "https://github.com/advisories/GHSA-2gv2-cffp-j227",
+  "proposal_slug": "prop_GHSA-2gv2-cffp-j227_go_github.com_kata-containers_kata-containers.json",
+  "source": "auto-discovery",
+  "harness_version": "phase5-move4",
+  "first_seen_at": "2026-05-28T22:56:20",
+  "status": "open"
+}

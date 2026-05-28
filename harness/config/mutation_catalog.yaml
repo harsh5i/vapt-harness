@@ -1,0 +1,91 @@
+schema_version: 1
+mutation_families:
+  - id: role_cross_product
+    title: Role Cross-Product
+    applies_to:
+      - authz_matrix
+      - token_scope
+      - websocket_authz
+    variants:
+      - viewer_to_owner_object
+      - viewer_to_peer_object
+      - editor_to_foreign_object
+      - admin_to_foreign_org
+      - anonymous_to_private_object
+    stop_condition: each lower-privileged role is denied outside its declared boundary and allowed inside it
+  - id: ownership_boundary
+    title: Object Ownership Boundary
+    applies_to:
+      - authz_matrix
+      - import_provisioning
+      - secret_credential_flow
+    variants:
+      - same_owner_same_container
+      - same_owner_different_container
+      - different_owner_same_container
+      - different_owner_different_container
+      - deleted_owner_reference
+    stop_condition: object ownership checks are enforced after every lookup and materialization step
+  - id: stale_identifier
+    title: Stale Identifier Reuse
+    applies_to:
+      - authz_matrix
+      - token_scope
+      - websocket_authz
+    variants:
+      - deleted_object_id
+      - recreated_object_same_name
+      - old_session_after_role_change
+      - revoked_token_after_cache_window
+      - switched_context_old_id
+    stop_condition: stale identifiers cannot bypass current authorization or scope state
+  - id: outbound_url_shape
+    title: Outbound URL Shape
+    applies_to:
+      - ssrf_callback
+      - cors_dns_rebinding
+    variants:
+      - localhost_ipv4
+      - localhost_ipv6
+      - decimal_ipv4
+      - redirect_to_loopback
+      - embedded_credentials
+      - alternate_scheme
+    stop_condition: outbound policy is invariant across equivalent URL representations
+  - id: parser_canonicalization
+    title: Parser Canonicalization
+    applies_to:
+      - import_provisioning
+      - path_archive
+      - deserialization_gadget
+    variants:
+      - duplicate_keys
+      - unicode_normalization
+      - dotdot_encoded
+      - absolute_path
+      - symlink_target
+      - nested_archive
+    stop_condition: validation and execution use the same canonical representation
+  - id: token_scope_lifecycle
+    title: Token Scope Lifecycle
+    applies_to:
+      - token_scope
+      - secret_credential_flow
+    variants:
+      - create_low_scope_call_high_scope
+      - scope_change_existing_token
+      - revoke_then_reuse
+      - token_export_visibility
+      - service_account_org_switch
+    stop_condition: token powers match current scope, lifecycle, and owning principal
+  - id: realtime_event_visibility
+    title: Realtime Event Visibility
+    applies_to:
+      - websocket_authz
+    variants:
+      - subscribe_before_permission_loss
+      - subscribe_after_permission_loss
+      - private_object_update_event
+      - deleted_object_event
+      - cross_tenant_broadcast
+    stop_condition: realtime events reveal no more than REST/API reads

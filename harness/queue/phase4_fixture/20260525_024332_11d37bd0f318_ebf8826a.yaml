@@ -1,0 +1,70 @@
+type: commit_diff
+source_kind: github_commits
+source_key: github_commits|vapt/harness/tests/results/phase4_check_repo|HEAD|||
+ref: 11d37bd0f318
+previous_ref: 5b061d0f3f9f4bf1137df8f29ea4adbca5cb1be3
+repo_path: vapt/harness/tests/results/phase4_check_repo
+branch: HEAD
+paths:
+- app.py
+matched_patterns:
+- pattern: authz
+  lines:
+  - '     # authz token and requests.get SSRF review fixture'
+  - '     # authz token and requests.get SSRF review fixture'
+  - '     # authz token and requests.get SSRF review fixture'
+  - '     # authz token and requests.get SSRF review fixture'
+  - '+    # authz token and requests.get SSRF review fixture'
+- pattern: token
+  lines:
+  - '@@ -13,20 +13,25 @@ def fetch_profile(url, token):'
+  - ' def fetch_profile(url, token):'
+  - '     # authz token and requests.get SSRF review fixture'
+  - '     return requests.get(url, headers={''Authorization'': token})'
+  - ' def fetch_profile(url, token):'
+  - '     # authz token and requests.get SSRF review fixture'
+  - '     return requests.get(url, headers={''Authorization'': token})'
+  - ' def fetch_profile(url, token):'
+  - '     # authz token and requests.get SSRF review fixture'
+  - '     return requests.get(url, headers={''Authorization'': token})'
+- pattern: requests.get
+  lines:
+  - '     # authz token and requests.get SSRF review fixture'
+  - '     return requests.get(url, headers={''Authorization'': token})'
+  - '     # authz token and requests.get SSRF review fixture'
+  - '     return requests.get(url, headers={''Authorization'': token})'
+  - '     # authz token and requests.get SSRF review fixture'
+  - '     return requests.get(url, headers={''Authorization'': token})'
+  - '     # authz token and requests.get SSRF review fixture'
+  - '     return requests.get(url, headers={''Authorization'': token})'
+  - '+    # authz token and requests.get SSRF review fixture'
+  - '+    return requests.get(url, headers={''Authorization'': token})'
+changed_files:
+- "M\tapp.py"
+diff_hunks: "diff --git a/app.py b/app.py\nindex 8ff8fab..0a80cc8 100644\n--- a/app.py\n\
+  +++ b/app.py\n@@ -13,20 +13,25 @@ def fetch_profile(url, token):\n \n \n def fetch_profile(url,\
+  \ token):\n     # authz token and requests.get SSRF review fixture\n     return\
+  \ requests.get(url, headers={'Authorization': token})\n \n \n def fetch_profile(url,\
+  \ token):\n     # authz token and requests.get SSRF review fixture\n     return\
+  \ requests.get(url, headers={'Authorization': token})\n \n \n def fetch_profile(url,\
+  \ token):\n     # authz token and requests.get SSRF review fixture\n     return\
+  \ requests.get(url, headers={'Authorization': token})\n \n \n def fetch_profile(url,\
+  \ token):\n     # authz token and requests.get SSRF review fixture\n     return\
+  \ requests.get(url, headers={'Authorization': token})\n+\n+\n+def fetch_profile(url,\
+  \ token):\n+    # authz token and requests.get SSRF review fixture\n+    return\
+  \ requests.get(url, headers={'Authorization': token})\n"
+candidate_seeds:
+- title: Review security-relevant change 11d37bd0f318 in phase4_fixture
+  surface: app.py
+  weakness: TBD
+  novelty: fresh-change
+  dedup: unchecked
+  next_action: Create a run, inspect diff_hunks, and promote only with reachability/proof.
+schema_version: 1
+queue_id: phase4_fixture/20260525_024332_11d37bd0f318_ebf8826a
+target_id: phase4_fixture
+status: pending
+created_at: '2026-05-25T02:43:32'
+history:
+- at: '2026-05-25T02:43:32'
+  event: queued

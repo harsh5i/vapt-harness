@@ -1,0 +1,9 @@
+# Canonical pattern stack.
+#
+# The executable source of truth currently lives at:
+# ../config/surfaces.yaml
+#
+# Keep this file as the knowledge-layer pointer so fresh sessions know where
+# pattern categories are maintained and tested.
+source: ../config/surfaces.yaml
+test_command: .venv-vapt/bin/python vapt/harness/harness.py surfaces-test

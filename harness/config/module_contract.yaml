@@ -1,0 +1,46 @@
+schema_version: 1
+purpose: >
+  Generic VAPT campaign modules declare what boundary they test and what target
+  adapter capabilities they require. Target-specific code must live under
+  vapt/bug_bounties/<target>/ and expose those capabilities through adapter
+  manifests or wrapper scripts.
+module_result_required_fields:
+  - module
+  - started_at
+  - finished_at
+  - verdict
+  - check_count
+  - finding_candidates
+verdicts:
+  no_findings: all positive and negative controls matched expectations
+  partial: one or more checks failed, setup was incomplete, or coverage is not decisive
+  candidate_signals: at least one unexpected behavior may become a vulnerability candidate
+  setup_failed: the module could not establish required preconditions
+  module_failed: the module crashed or produced invalid output
+adapter_manifest_required_fields:
+  - schema_version
+  - target_id
+  - adapter_id
+  - modules
+adapter_module_required_fields:
+  - id
+  - local_name
+  - implementation
+  - requirement_methods
+  - command
+implementation_rules:
+  - Core harness code must not import target-specific adapter code.
+  - Target adapters may call target-local scripts only under vapt/bug_bounties/<target>/.
+  - Adapter manifests map generic module IDs to target-local commands and evidence paths.
+  - Module commands must default to localhost/self-hosted targets unless explicitly overridden by the operator.
+  - Module results must use the common verdict vocabulary so campaign-plan can reason over coverage.
+command_template_variables:
+  target_id: target id from the adapter manifest
+  adapter_id: adapter id from the adapter manifest
+  module_id: generic module id
+  local_name: adapter-local module name
+  out_dir: campaign output directory selected by the operator or adapter default
+  module_out_dir: module-specific output directory under the campaign output directory
+  runtime_root: adapter runtime root, if declared
+  default_target: adapter safety.default_target, if declared
+  workspace_root: local workspace root

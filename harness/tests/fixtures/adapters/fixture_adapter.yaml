@@ -1,0 +1,32 @@
+schema_version: 1
+target_id: harness-fixture
+adapter_id: harness_fixture_adapter
+runtime_root: vapt/harness/tests/fixtures
+default_run_root: vapt/harness/tests/results/campaign-run-fixture
+safety:
+  default_target: local-fixture
+  remote_targets_require_operator_flag: true
+modules:
+  - id: authz_matrix
+    local_name: fixture_authz
+    implementation: adapter_echo_module.py
+    command:
+      - .venv-vapt/bin/python
+      - vapt/harness/tests/fixtures/adapter_echo_module.py
+      - --out-dir
+      - "{module_out_dir}"
+      - --module-id
+      - "{module_id}"
+      - --local-name
+      - "{local_name}"
+    requirement_methods:
+      - create_principals
+      - create_owned_objects
+      - switch_context
+      - assert_allow_deny
+    result_files:
+      - modules/fixture_authz/results.json
+      - modules/fixture_authz/summary.md
+    mutation_families:
+      - role_cross_product
+    stop_condition: fixture command emits valid module result and mutation coverage

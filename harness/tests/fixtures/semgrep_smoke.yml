@@ -1,0 +1,8 @@
+rules:
+  - id: harness-smoke-python-subprocess-shell
+    message: subprocess called with shell=True
+    severity: WARNING
+    languages:
+      - python
+    patterns:
+      - pattern: subprocess.$FUNC(..., shell=True, ...)

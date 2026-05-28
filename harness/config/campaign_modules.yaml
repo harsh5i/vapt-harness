@@ -1,0 +1,220 @@
+modules:
+  - id: authz_matrix
+    title: Authorization / IDOR Matrix
+    family: runtime
+    impact: cross-tenant or privilege-boundary data access
+    keywords:
+      - auth
+      - authorization
+      - rbac
+      - role
+      - permission
+      - tenant
+      - org
+      - team
+      - channel
+      - folder
+      - dashboard
+      - datasource
+      - idor
+      - privilege
+    adapter_requirements:
+      - create_principals
+      - create_owned_objects
+      - switch_context
+      - assert_allow_deny
+    stop_condition: positive controls pass and negative cross-boundary controls deny
+  - id: ssrf_callback
+    title: SSRF / Outbound Callback Matrix
+    family: runtime
+    impact: server-side network access or internal metadata reachability
+    keywords:
+      - ssrf
+      - webhook
+      - callback
+      - datasource
+      - proxy
+      - url
+      - image
+      - renderer
+      - openGraph
+      - unfurl
+      - fetch
+      - http
+    adapter_requirements:
+      - configure_outbound_target
+      - start_callback
+      - trigger_fetch
+      - assert_callback_policy
+    stop_condition: egress attempts are either blocked or proven only through intended privileged configuration
+  - id: token_scope
+    title: API Token / Service Account Scope Matrix
+    family: runtime
+    impact: privilege escalation through token creation, reuse, or scope confusion
+    keywords:
+      - token
+      - api key
+      - service account
+      - oauth
+      - jwt
+      - session
+      - bearer
+      - scope
+      - impersonation
+    adapter_requirements:
+      - create_token
+      - enumerate_scopes
+      - call_privileged_api
+      - revoke_token
+    stop_condition: low-privileged tokens cannot exceed declared scope and revoked tokens stop working
+  - id: websocket_authz
+    title: WebSocket / Realtime Authorization Drift
+    family: runtime
+    impact: private event leakage through realtime channels
+    keywords:
+      - websocket
+      - realtime
+      - event
+      - broadcast
+      - notification
+      - live
+      - subscription
+      - channel
+    adapter_requirements:
+      - open_realtime_session
+      - trigger_private_event
+      - assert_event_visibility
+    stop_condition: realtime visibility matches REST/API authorization for all tested roles
+  - id: import_provisioning
+    title: Import / Provisioning Parser Boundary
+    family: runtime
+    impact: file write, data exposure, RCE, or trust-boundary bypass through imported config
+    keywords:
+      - import
+      - export
+      - provisioning
+      - yaml
+      - json
+      - template
+      - dashboard
+      - config
+      - bulk
+    adapter_requirements:
+      - submit_config
+      - observe_materialized_object
+      - assert_no_path_escape
+    stop_condition: malformed and boundary-crossing configs are rejected or safely normalized
+  - id: path_archive
+    title: Path Traversal / Archive Extraction
+    family: source_runtime
+    impact: arbitrary file read/write through path canonicalization or archive handling
+    keywords:
+      - path
+      - traversal
+      - archive
+      - zip
+      - tar
+      - extract
+      - symlink
+      - file
+      - upload
+      - download
+    adapter_requirements:
+      - supply_path_payload
+      - observe_filesystem_effect
+      - assert_containment
+    stop_condition: encoded, relative, absolute, and symlink variants remain contained
+  - id: deserialization_gadget
+    title: Deserialization / Gadget Reconstruction
+    family: source_runtime
+    impact: code execution, file access, or trusted-type bypass from serialized input
+    keywords:
+      - serialization
+      - deserialization
+      - pickle
+      - model
+      - loader
+      - trusted
+      - numpy
+      - scipy
+      - sklearn
+      - gadget
+      - archive
+    adapter_requirements:
+      - craft_serialized_input
+      - load_artifact
+      - assert_gadget_impact
+    stop_condition: default and claimed-safe load paths reject untrusted behavior and gadget variants lack impact
+  - id: plugin_boundary
+    title: Plugin Loading / Signature Boundary
+    family: source_runtime
+    impact: RCE or sandbox escape through plugin trust failures
+    keywords:
+      - plugin
+      - extension
+      - signature
+      - sandbox
+      - load
+      - manifest
+      - electron
+      - module
+    adapter_requirements:
+      - install_plugin
+      - verify_signature_policy
+      - trigger_plugin_execution
+    stop_condition: unsigned/tampered plugins are rejected and plugin APIs respect privilege boundaries
+  - id: cors_dns_rebinding
+    title: CORS / DNS Rebinding / Local Web Exposure
+    family: runtime
+    impact: browser-origin access to local or private administration APIs
+    keywords:
+      - cors
+      - origin
+      - local
+      - localhost
+      - dns rebinding
+      - browser
+      - dashboard
+      - admin
+    adapter_requirements:
+      - start_local_service
+      - issue_cross_origin_request
+      - assert_origin_policy
+    stop_condition: untrusted origins cannot read privileged responses or perform state-changing actions
+  - id: patch_diff_regression
+    title: Patch-Diff Regression Miner
+    family: source
+    impact: incomplete security fix or sibling variant in changed code
+    keywords:
+      - cve
+      - ghsa
+      - security
+      - patch
+      - advisory
+      - fix
+      - regression
+      - duplicate
+    adapter_requirements:
+      - local_git_repo
+      - version_range
+      - security_change_filter
+    stop_condition: recent security patches have no reachable sibling variant with runtime impact
+  - id: secret_credential_flow
+    title: Secret / Credential Propagation
+    family: source_runtime
+    impact: credential disclosure through logs, exports, metadata, or generated artifacts
+    keywords:
+      - secret
+      - credential
+      - token
+      - api key
+      - password
+      - log
+      - export
+      - metadata
+      - model card
+    adapter_requirements:
+      - seed_secret
+      - trigger_export_or_log
+      - assert_secret_absent
+    stop_condition: seeded secrets do not appear in user-accessible artifacts outside intended scope

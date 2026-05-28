@@ -1,0 +1,23 @@
+{
+  "ghsa_id": "GHSA-q3w6-q3hc-c5x6",
+  "cves": [
+    "CVE-2026-47717"
+  ],
+  "severity": "high",
+  "published": "2026-05-27T22:51:18Z",
+  "ecosystem": "npm",
+  "package": "fuxa-server",
+  "vulnerable_range": "= 1.3.0",
+  "summary": "FUXA's Unauthenticated Project Data Disclosure Exposes Server-Side Scripts and Device Configurations",
+  "html_url": "https://github.com/advisories/GHSA-q3w6-q3hc-c5x6",
+  "proposal_slug": "prop_GHSA-q3w6-q3hc-c5x6_npm_fuxa-server.json",
+  "source": "auto-discovery",
+  "harness_version": "phase5-move4",
+  "first_seen_at": "2026-05-28T22:56:20",
+  "status": "claimed",
+  "claimed_by": "operator",
+  "claimed_at": "2026-05-28T22:56:33",
+  "notes": [
+    "promising npm target"
+  ]
+}

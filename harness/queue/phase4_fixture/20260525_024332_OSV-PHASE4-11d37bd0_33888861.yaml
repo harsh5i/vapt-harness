@@ -1,0 +1,96 @@
+type: advisory
+source_kind: osv_advisories
+source_key: osv_advisories|||phase4-fixture|PyPI|vapt/harness/tests/fixtures/advisories/osv_phase4_sample.json
+ref: OSV-PHASE4-11d37bd0
+advisory:
+  id: OSV-PHASE4-11d37bd0
+  package: phase4-fixture
+  ecosystem: PyPI
+  summary: Fixture advisory with fixed commit for patch-window enrichment
+  cwe: CWE-863
+  fixed_commit: 11d37bd0f3181378af690a63ff536c8a2be51cda
+affected:
+  packages:
+  - phase4-fixture
+  ecosystems:
+  - pypi
+  cwes:
+  - CWE-863
+  affected_versions: []
+  ranges: []
+match_reasons:
+- package:phase4-fixture
+- ecosystem:pypi
+patch_enrichment:
+  available: true
+  repo_path: vapt/harness/tests/results/phase4_check_repo
+  range: 5b061d0f3f9f4bf1137df8f29ea4adbca5cb1be3..11d37bd0f3181378af690a63ff536c8a2be51cda
+  paths: []
+  changed_files:
+  - "M\tapp.py"
+  matched_patterns:
+  - pattern: authz
+    lines:
+    - '     # authz token and requests.get SSRF review fixture'
+    - '     # authz token and requests.get SSRF review fixture'
+    - '     # authz token and requests.get SSRF review fixture'
+    - '     # authz token and requests.get SSRF review fixture'
+    - '+    # authz token and requests.get SSRF review fixture'
+  - pattern: token
+    lines:
+    - '@@ -13,20 +13,25 @@ def fetch_profile(url, token):'
+    - ' def fetch_profile(url, token):'
+    - '     # authz token and requests.get SSRF review fixture'
+    - '     return requests.get(url, headers={''Authorization'': token})'
+    - ' def fetch_profile(url, token):'
+    - '     # authz token and requests.get SSRF review fixture'
+    - '     return requests.get(url, headers={''Authorization'': token})'
+    - ' def fetch_profile(url, token):'
+    - '     # authz token and requests.get SSRF review fixture'
+    - '     return requests.get(url, headers={''Authorization'': token})'
+  - pattern: requests.get
+    lines:
+    - '     # authz token and requests.get SSRF review fixture'
+    - '     return requests.get(url, headers={''Authorization'': token})'
+    - '     # authz token and requests.get SSRF review fixture'
+    - '     return requests.get(url, headers={''Authorization'': token})'
+    - '     # authz token and requests.get SSRF review fixture'
+    - '     return requests.get(url, headers={''Authorization'': token})'
+    - '     # authz token and requests.get SSRF review fixture'
+    - '     return requests.get(url, headers={''Authorization'': token})'
+    - '+    # authz token and requests.get SSRF review fixture'
+    - '+    return requests.get(url, headers={''Authorization'': token})'
+  diff_hunks: "diff --git a/app.py b/app.py\nindex 8ff8fab..0a80cc8 100644\n--- a/app.py\n\
+    +++ b/app.py\n@@ -13,20 +13,25 @@ def fetch_profile(url, token):\n \n \n def fetch_profile(url,\
+    \ token):\n     # authz token and requests.get SSRF review fixture\n     return\
+    \ requests.get(url, headers={'Authorization': token})\n \n \n def fetch_profile(url,\
+    \ token):\n     # authz token and requests.get SSRF review fixture\n     return\
+    \ requests.get(url, headers={'Authorization': token})\n \n \n def fetch_profile(url,\
+    \ token):\n     # authz token and requests.get SSRF review fixture\n     return\
+    \ requests.get(url, headers={'Authorization': token})\n \n \n def fetch_profile(url,\
+    \ token):\n     # authz token and requests.get SSRF review fixture\n     return\
+    \ requests.get(url, headers={'Authorization': token})\n+\n+\n+def fetch_profile(url,\
+    \ token):\n+    # authz token and requests.get SSRF review fixture\n+    return\
+    \ requests.get(url, headers={'Authorization': token})\n"
+  stderr: ''
+matched_patterns:
+- pattern: authz_boundary
+  lines: []
+- pattern: network_ssrf
+  lines: []
+candidate_seeds:
+- title: Review OSV-PHASE4-11d37bd0 for regression or affected-version correction
+  surface: Fixture advisory with fixed commit for patch-window enrichment
+  weakness: CWE-863
+  novelty: possible-regression
+  dedup: advisory-known
+  next_action: Cross-reference affected package/version and patch diff before candidate
+    promotion.
+schema_version: 1
+queue_id: phase4_fixture/20260525_024332_OSV-PHASE4-11d37bd0_33888861
+target_id: phase4_fixture
+status: pending
+created_at: '2026-05-25T02:43:32'
+history:
+- at: '2026-05-25T02:43:32'
+  event: queued

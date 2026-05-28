@@ -1,0 +1,51 @@
+rules:
+  - id: go-http-request-from-variable
+    languages: [go]
+    severity: WARNING
+    message: "HTTP request target is variable-controlled; review caller control, redirects, scheme, DNS, and private network restrictions."
+    patterns:
+      - pattern-either:
+          - pattern: http.NewRequest($METHOD, $URL, ...)
+          - pattern: http.NewRequestWithContext($CTX, $METHOD, $URL, ...)
+          - pattern: $CLIENT.Get($URL)
+          - pattern: http.Get($URL)
+      - metavariable-regex:
+          metavariable: $URL
+          regex: "^[a-zA-Z_][a-zA-Z0-9_\\.]*$"
+
+  - id: go-object-key-join-with-tenant-or-id
+    languages: [go]
+    severity: WARNING
+    message: "Path/object key is built from tenant/id-like data; verify tenant/id validation and storage backend canonicalization."
+    patterns:
+      - pattern-either:
+          - pattern: filepath.Join(..., $X, ...)
+          - pattern: path.Join(..., $X, ...)
+      - metavariable-regex:
+          metavariable: $X
+          regex: "(?i).*(tenant|user|org|id|name|key|path).*"
+
+  - id: go-forward-all-headers
+    languages: [go]
+    severity: WARNING
+    message: "Bulk header forwarding/restoration; verify sensitive headers, tenant headers, hop-by-hop headers, and auth boundaries."
+    patterns:
+      - pattern-either:
+          - pattern: |
+              for $K, $V := range $HEADERS {
+                ...
+                $REQ.Header.Add($K, ...)
+                ...
+              }
+          - pattern: |
+              for $K, $V := range $HEADERS {
+                ...
+                $REQ.Header.Set($K, ...)
+                ...
+              }
+
+  - id: go-set-host-header-instead-of-request-host
+    languages: [go]
+    severity: INFO
+    message: "Setting Header['Host'] does not necessarily set Request.Host; review proxy host routing and auth assumptions."
+    pattern: $REQ.Header.Set("Host", $HOST)

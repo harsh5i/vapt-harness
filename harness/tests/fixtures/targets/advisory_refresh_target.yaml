@@ -1,0 +1,14 @@
+id: advisory-refresh-fixture
+name: phase4-fixture
+program: harness fixture
+repo_url: https://github.com/example/phase4-fixture
+source_path: vapt/harness/tests/results/phase4_check_repo
+language:
+  - Python
+category:
+  - authz_boundary
+in_scope:
+  - fixture-only advisory refresh validation
+known_duplicates: []
+osv_ecosystem: PyPI
+osv_package: phase4-fixture

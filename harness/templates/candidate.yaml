@@ -1,0 +1,30 @@
+candidates:
+  - id: CAND-001
+    title: ""
+    status: candidate
+    surface: ""
+    weakness: ""
+    cwe: ""
+    cve: "N/A"
+    cvss: ""
+    impact: ""
+    attacker_control: ""
+    sink: ""
+    framework_mappings:
+      mitre_attack: ""
+      mitre_atlas: ""
+      d3fend: ""
+      nist_csf: ""
+      nist_ai_rmf: ""
+    negative_controls: ""
+    root_cause: ""
+    variant_analysis: ""
+    patch_diff: ""
+    exploitability: ""
+    disclosure_quality: ""
+    safety_notes: ""
+    reference_sources: ""
+    novelty: unchecked
+    proof: not_started
+    decision_reason: ""
+    history: []

@@ -1,0 +1,26 @@
+{
+  "results": [
+    {
+      "source": {"path": "requirements.txt"},
+      "packages": [
+        {
+          "package": {
+            "name": "examplepkg",
+            "version": "1.0.0",
+            "ecosystem": "PyPI"
+          },
+          "vulnerabilities": [
+            {
+              "id": "PYSEC-2026-7",
+              "aliases": ["CVE-2026-33333"],
+              "summary": "Example OSV dependency vulnerability fixture.",
+              "database_specific": {
+                "cwe_ids": ["CWE-937"]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

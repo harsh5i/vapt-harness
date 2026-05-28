@@ -1,0 +1,17 @@
+arjun
+bandit
+beautifulsoup4
+cryptography
+detect-secrets
+dirsearch
+dnspython
+dnsrecon
+pip-audit
+requests
+setuptools<81
+shcheck
+semgrep
+sslyze
+tldextract
+wafw00f
+wapiti3

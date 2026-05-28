@@ -1,0 +1,17 @@
+{
+  "results": [
+    {
+      "filename": "sample/insecure.py",
+      "line_number": 12,
+      "issue_severity": "HIGH",
+      "issue_confidence": "HIGH",
+      "issue_text": "Use of hardcoded password string.",
+      "test_id": "B105",
+      "test_name": "hardcoded_password_string",
+      "issue_cwe": {
+        "id": 259,
+        "link": "https://cwe.mitre.org/data/definitions/259.html"
+      }
+    }
+  ]
+}

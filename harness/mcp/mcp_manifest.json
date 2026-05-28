@@ -1,0 +1,152 @@
+{
+  "schema_version": 1,
+  "name": "local-vapt-harness",
+  "harness_version": "0.4.1-phase4-hardening",
+  "entrypoint": [".venv-vapt/bin/python", "vapt/harness/harness.py"],
+  "tools": [
+    {
+      "name": "session_start",
+      "command": "session-start",
+      "description": "Emit cold-start context for a run directory.",
+      "input_schema": {
+        "type": "object",
+        "required": ["run_dir"],
+        "properties": {
+          "run_dir": {"type": "string"}
+        }
+      }
+    },
+    {
+      "name": "next_action",
+      "command": "next-action",
+      "description": "Recommend the next workflow action for a run.",
+      "input_schema": {
+        "type": "object",
+        "required": ["run_dir"],
+        "properties": {
+          "run_dir": {"type": "string"},
+          "json": {"type": "boolean", "default": true}
+        }
+      }
+    },
+    {
+      "name": "knowledge",
+      "command": "knowledge",
+      "description": "Search local harness knowledge and corpus.",
+      "input_schema": {
+        "type": "object",
+        "required": ["query"],
+        "properties": {
+          "query": {"type": "string"},
+          "limit": {"type": "integer", "default": 8},
+          "json": {"type": "boolean", "default": true}
+        }
+      }
+    },
+    {
+      "name": "watch_tick",
+      "command": "watch-tick",
+      "description": "Run one Phase 4 watch polling pass.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "target": {"type": "string"},
+          "seed": {"type": "boolean", "default": false},
+          "timeout": {"type": "integer", "default": 30},
+          "json": {"type": "boolean", "default": true}
+        }
+      }
+    },
+    {
+      "name": "queue_list",
+      "command": "queue",
+      "description": "List Phase 4 queue entries.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "target": {"type": "string"},
+          "all": {"type": "boolean", "default": false},
+          "json": {"type": "boolean", "default": true}
+        }
+      }
+    },
+    {
+      "name": "phase4_check",
+      "command": "phase4-check",
+      "description": "Run offline Phase 4 watch/queue acceptance checks.",
+      "input_schema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "phase4_remote_check",
+      "command": "phase4-remote-check",
+      "description": "Validate live remote GitHub/GHSA/OSV polling. Requires explicit network permission.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "timeout": {"type": "integer", "default": 20}
+        }
+      },
+      "requires_network": true
+    },
+    {
+      "name": "phase4_soak_check",
+      "command": "phase4-soak-check",
+      "description": "Run a bounded daemon soak check.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "target": {"type": "string"},
+          "seconds": {"type": "integer", "default": 10},
+          "iterations": {"type": "integer", "default": 3},
+          "interval_seconds": {"type": "integer", "default": 1},
+          "require_24h": {"type": "boolean", "default": false}
+        }
+      }
+    },
+    {
+      "name": "playbook",
+      "command": "playbook",
+      "description": "Generate target-class BB/VAPT playbook commands and review checks.",
+      "input_schema": {
+        "type": "object",
+        "required": ["run_dir"],
+        "properties": {
+          "run_dir": {"type": "string"},
+          "kind": {"type": "string", "default": "auto"}
+        }
+      }
+    },
+    {
+      "name": "codeql_workflow",
+      "command": "codeql-workflow",
+      "description": "Generate repeatable CodeQL workflow commands for a run.",
+      "input_schema": {
+        "type": "object",
+        "required": ["run_dir"],
+        "properties": {
+          "run_dir": {"type": "string"},
+          "language": {"type": "string"},
+          "json": {"type": "boolean", "default": true}
+        }
+      }
+    },
+    {
+      "name": "report_gate",
+      "command": "report-gate",
+      "description": "Run strict final report-readiness checks for candidate submissions.",
+      "input_schema": {
+        "type": "object",
+        "required": ["run_dir"],
+        "properties": {
+          "run_dir": {"type": "string"},
+          "candidate_id": {"type": "string"},
+          "mark_ready": {"type": "boolean", "default": false},
+          "fail": {"type": "boolean", "default": true}
+        }
+      }
+    }
+  ]
+}

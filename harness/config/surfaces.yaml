@@ -1,0 +1,198 @@
+version: 1
+surfaces:
+  deserialization:
+    fixed:
+      - pickle.load
+      - joblib.load
+      - yaml.load
+      - __reduce__
+      - __setstate__
+      - marshal.loads
+      - dill
+    regex: '(pickle\.load|joblib\.load|yaml\.load|__reduce__|__setstate__|marshal\.loads|dill)'
+  path_traversal:
+    fixed:
+      - extractall
+      - ZipFile
+      - tarfile
+      - open(
+      - Path(
+      - read_text
+      - write_text
+      - send_file
+    regex: '(extractall|ZipFile|tarfile|open\(|Path\(|read_text|write_text|send_file)'
+  command_execution:
+    fixed:
+      - subprocess
+      - os.system
+      - popen
+      - child_process.exec
+      - child_process.spawn
+      - Runtime.exec
+      - ProcessBuilder
+      - exec.Command
+      - exec(
+      - eval(
+    regex: '(subprocess|os\.system|popen|child_process\.(exec|spawn)|Runtime\.exec|ProcessBuilder|exec\.Command|exec\(|eval\(|Command\(|shell)'
+  network_ssrf:
+    fixed:
+      - requests.get
+      - requests.post
+      - httpx.
+      - aiohttp
+      - axios.
+      - urlopen
+      - urllib.request
+      - http.Client
+      - http.NewRequest
+      - http.Get
+      - fetch(
+      - net/http
+    regex: '(http\.Client|http\.Get|http\.NewRequest|requests\.|httpx\.|aiohttp|axios\.|fetch\(|urlopen|urllib\.request|Dial\(|SSRF|webhook|net/http)'
+  template_injection:
+    fixed:
+      - Template(
+      - render_template
+      - jinja
+      - text/template
+      - html/template
+    regex: '(Template\(|render_template|jinja|text/template|html/template)'
+  authz_boundary:
+    fixed:
+      - permission
+      - authorize
+      - authz
+      - token
+      - secret
+      - credential
+      - api_key
+    regex: '(Permission|SessionHasPermission|UserCanSee|Authorize|authz|IsAdmin|Require[A-Z]|permission|authorize|token|secret|credential|api_key)'
+  realtime_websocket:
+    fixed:
+      - websocket
+      - WebSocket
+      - NewWebSocketEvent
+      - broadcast
+      - Publish(
+      - ShouldSendEvent
+      - ChannelId
+      - TeamId
+      - UserId
+    regex: '(NewWebSocketEvent|Publish\(|Broadcast|broadcast|ShouldSendEvent|EventChannel|websocket|WebSocket|ChannelId|TeamId|UserId)'
+  routes_handlers:
+    fixed:
+      - Handle(
+      - Methods(
+      - router.
+      - Route(
+      - APISessionRequired
+      - APIHandler
+    regex: '(Handle\(|Methods\(|router\.|Route\(|APISessionRequired|APIHandler)'
+  file_upload_storage:
+    fixed:
+      - multipart
+      - upload
+      - download
+      - avatar
+      - attachment
+      - S3
+      - MinIO
+    regex: '(multipart|upload|download|avatar|attachment|S3|MinIO|open\(|Open\(|ReadFile|WriteFile|extract|Upload|Download|FileInfo)'
+  cors_browser_boundary:
+    fixed:
+      - Access-Control-Allow-Origin
+      - CORS
+      - Origin
+      - SameSite
+      - cookie
+    regex: '(Access-Control-Allow-Origin|CORS|Origin|SameSite|cookie|Set-Cookie)'
+  ai_prompt_injection:
+    fixed:
+      - prompt
+      - system_prompt
+      - tool_call
+      - function_call
+      - agent
+      - retrieval
+      - rag
+    regex: '(prompt|system_prompt|tool_call|function_call|agent|retrieval|rag)'
+  plugin_extension:
+    fixed:
+      - plugin
+      - extension
+      - signature
+      - manifest
+      - sandbox
+    regex: '(plugin|extension|signature|manifest|sandbox)'
+  supply_chain:
+    fixed:
+      - requirements.txt
+      - pyproject.toml
+      - package.json
+      - go.mod
+      - Cargo.toml
+      - download
+      - checksum
+    regex: '(requirements\.txt|pyproject\.toml|package\.json|go\.mod|Cargo\.toml|download|checksum)'
+  race_toctou:
+    fixed:
+      - time.Sleep
+      - go func
+      - threading
+      - async
+      - await
+      - lock
+      - mutex
+      - rename
+      - symlink
+      - stat(
+    regex: '(time\.Sleep|go func|threading|async|await|lock|mutex|rename|symlink|stat\()'
+  memory_safety_native:
+    fixed:
+      - unsafe
+      - cgo
+      - memcpy
+      - strcpy
+      - malloc
+      - free(
+      - new[]
+      - delete
+      - reinterpret_cast
+    regex: '(unsafe|cgo|memcpy|malloc|free\(|reinterpret_cast|strcpy|new\[\]|delete)'
+  parser_differential:
+    fixed:
+      - parse
+      - normalize
+      - canonical
+      - url.Parse
+      - urllib.parse
+      - decode
+      - unquote
+      - regex
+    regex: '(parse|Parse|decode|Decode|Unmarshal|Marshal|json\.|yaml\.|xml\.|normalize|canonical|url\.Parse|urllib\.parse|unquote|regex)'
+  auth_protocol:
+    fixed:
+      - SAML
+      - OAuth
+      - OIDC
+      - JWT
+      - CSRF
+      - SameSite
+      - Set-Cookie
+      - session
+      - cookie
+      - audience
+      - issuer
+      - redirect_uri
+      - state
+      - nonce
+    regex: '(SAML|OAuth|OIDC|JWT|CSRF|SameSite|Set-Cookie|session|cookie|audience|issuer|redirect_uri|state|nonce)'
+aliases:
+  functions: '^(func |def |class |export function |function )'
+  authz_checks: authz_boundary
+  events_broadcasts: realtime_websocket
+  parsers_decoders: parser_differential
+  file_storage: file_upload_storage
+  network_clients: network_ssrf
+  process_execution: command_execution
+  native_unsafe: memory_safety_native

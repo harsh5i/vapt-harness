@@ -1,0 +1,18 @@
+{
+  "ghsa_id": "GHSA-xm76-r88j-vm3g",
+  "cves": [
+    "CVE-2026-45332"
+  ],
+  "severity": "high",
+  "published": "2026-05-27T21:32:31Z",
+  "ecosystem": "composer",
+  "package": "automad/automad",
+  "vulnerable_range": ">= 2.0.0-alpha.1, <= 2.0.0-beta.27",
+  "summary": "Automad has Broken Access Control: Unauthenticated exposure of administrator bcrypt password hashes and TOTP secrets via public API endpoint",
+  "html_url": "https://github.com/advisories/GHSA-xm76-r88j-vm3g",
+  "proposal_slug": "prop_GHSA-xm76-r88j-vm3g_composer_automad_automad.json",
+  "source": "auto-discovery",
+  "harness_version": "phase5-move4",
+  "first_seen_at": "2026-05-28T22:56:20",
+  "status": "open"
+}

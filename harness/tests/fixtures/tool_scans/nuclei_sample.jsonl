@@ -1,0 +1,1 @@
+{"template-id":"example-misconfig","template-path":"http/misconfiguration/example.yaml","info":{"name":"Example Misconfiguration","severity":"high","classification":{"cwe-id":["CWE-200"],"cve-id":["CVE-2026-22222"]}},"matched-at":"https://example.test/admin","matcher-name":"word"}
