@@ -63,7 +63,7 @@ GitHub mirror. Treat it as your private working tree.
 
 If you are an external language model with shell access being asked
 to run authorized vulnerability research with this harness, read
-`vapt/docs/LLM_OPERATOR_GUIDE.md` first. It is the cold-start
+`LLM_OPERATOR_GUIDE.md` (at the repo root) first. It is the cold-start
 contract: identity, authorization, the lifecycle state machine,
 which role file to read at each stage, command reference grouped by
 lifecycle phase, gates and what they reject, common silent failure
