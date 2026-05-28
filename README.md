@@ -26,41 +26,65 @@ in `docs/MYTHOS_SUBSTRATE_PHASE5_ROADMAP_2026-05-28.md`:
 ## Layout
 
 ```
-harness/        Code + per-package skeletons + agent role files + configs
-docs/           Doctrine, roadmaps, per-Move evidence docs
-bug_bounties/
-  _fixtures/    Captive fixtures (seeded_bugs_repo for Move 5 probes)
-  _shared/      Cross-engagement corpus (schemas + reference candidates)
-env/            Optional full VAPT toolchain requirements
-requirements.txt Minimum runtime (PyYAML)
+vapt/                  Tracked: harness code, doctrine, fixtures
+  harness/             Code + per-package skeletons + agent role files
+  docs/                Doctrine, roadmaps, per-Move evidence (Phase 1-5)
+  bug_bounties/
+    _fixtures/         Captive fixtures (seeded_bugs_repo for Move 5)
+    _shared/           Cross-engagement corpus (schemas + reference data)
+  env/                 Optional full VAPT toolchain requirements
+  requirements.txt     Minimum runtime (PyYAML)
+engagement/            Local-only: bounty targets, runs, evidence, pocs,
+                       reports, scripts, runtime, templates. Gitignored.
+README.md
 ```
+
+The `vapt/` subdir preserves the path conventions the harness code uses
+internally (`ROOT / "vapt" / ...`). Treat `vapt/` as the harness package
+and `engagement/` as your private workspace.
+
+### `engagement/` is local-only
+
+This folder holds anything tied to a specific authorized engagement:
+
+- `engagement/bug_bounties/<target>/` - per-target metadata, watch
+  configs, prior recon, source mirrors.
+- `engagement/harness_runs/` - operator runs (was `harness/runs/`
+  upstream).
+- `engagement/evidence/`, `engagement/pocs/`, `engagement/reports/` -
+  raw artifacts.
+- `engagement/env/`, `engagement/scripts/`, `engagement/runtime/`,
+  `engagement/templates/` - bootstrap and tooling state.
+
+`engagement/` is in `.gitignore`. It is intentionally not part of the
+GitHub mirror. Treat it as your private working tree.
 
 ## Quick start
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r vapt/requirements.txt
 
 # Capability inventory
-python3 harness/harness.py tools-capability --json
+python3 vapt/harness/harness.py tools-capability --json
 
 # Seed the outcome-tuning loop with synthetic rows derived from corpus
-python3 harness/harness.py submissions seed-synthetic
+python3 vapt/harness/harness.py submissions seed-synthetic
 
 # Synthetic excluded by default
-python3 harness/harness.py outcome-tune --out /tmp/tune.yaml
+python3 vapt/harness/harness.py outcome-tune --out /tmp/tune.yaml
 
 # Include for development
-python3 harness/harness.py outcome-tune --include-synthetic --out /tmp/tune.yaml
+python3 vapt/harness/harness.py outcome-tune --include-synthetic --out /tmp/tune.yaml
 
 # Run the source-reading probe against the seeded fixture
-python3 harness/harness.py source-probe \
-  --local-path "$(pwd)/bug_bounties/_fixtures/seeded_bugs_repo"
+python3 vapt/harness/harness.py source-probe \
+  --local-path "$(pwd)/vapt/bug_bounties/_fixtures/seeded_bugs_repo"
 
 # Sweep GHSA for unwatched packages (requires internet)
-python3 harness/harness.py discovery-sweep --severity-floor high --since-days 7
-python3 harness/harness.py discovery-list
+python3 vapt/harness/harness.py discovery-sweep --severity-floor high --since-days 7
+python3 vapt/harness/harness.py discovery-list
 ```
 
 ## What this is not
