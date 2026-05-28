@@ -59,6 +59,16 @@ This folder holds anything tied to a specific authorized engagement:
 `engagement/` is in `.gitignore`. It is intentionally not part of the
 GitHub mirror. Treat it as your private working tree.
 
+## Using the harness as an LLM operator
+
+If you are an external language model with shell access being asked
+to run authorized vulnerability research with this harness, read
+`vapt/docs/LLM_OPERATOR_GUIDE.md` first. It is the cold-start
+contract: identity, authorization, the lifecycle state machine,
+which role file to read at each stage, command reference grouped by
+lifecycle phase, gates and what they reject, common silent failure
+modes, and a worked end-to-end example.
+
 ## Quick start
 
 ```bash
