@@ -2,7 +2,8 @@
 
 Given a target whose `target` dict carries `{repo, commit}` or
 `{local_path}`, acquire the source (Move 5 substrate), index it, walk
-the Python AST, and emit per-finding candidates of shape:
+the Python AST (`ast_python`) and Ruby source (`ast_ruby`), and emit
+per-finding candidates of shape:
 
     {file, line, bug_class, hypothesis, snippet, source_target}
 
@@ -29,20 +30,20 @@ from probes.base import Probe, ProbeContext, ProbeResult
 
 def _load_source_modules():
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    from source import acquire, index, ast_python
-    return acquire, index, ast_python
+    from source import acquire, index, ast_python, ast_ruby
+    return acquire, index, ast_python, ast_ruby
 
 
 class PatchVariantHunter(Probe):
     name = "patch_variant_hunter"
     vuln_class = "source_audit"
     description = (
-        "Source-reading probe: walks Python files in the target repo and emits "
-        "bug-class hypothesis candidates for operator/LLM review."
+        "Source-reading probe: walks Python and Ruby files in the target repo and "
+        "emits bug-class hypothesis candidates for operator/LLM review."
     )
 
     def run(self, ctx: ProbeContext) -> ProbeResult:
-        acquire_mod, index_mod, ast_python_mod = _load_source_modules()
+        acquire_mod, index_mod, ast_python_mod, ast_ruby_mod = _load_source_modules()
         target = ctx.target or {}
         local_path = target.get("local_path") or target.get("source_local_path")
         repo_url = target.get("repo_url") or target.get("source_repo_url")
@@ -61,12 +62,15 @@ class PatchVariantHunter(Probe):
             })
 
         repo_path = Path(descriptor["path"])
-        idx = index_mod.index_tree(repo_path, max_files=ctx.knobs.get("max_files"))
+        max_files = ctx.knobs.get("max_files")
+        idx = index_mod.index_tree(repo_path, max_files=max_files)
         python_files = [repo_path / p for p in idx["languages"].get("python", [])]
+        ruby_files = [repo_path / p for p in idx["languages"].get("ruby", [])]
         allow_classes: set[str] | None = None
         if ctx.knobs.get("bug_classes"):
             allow_classes = {str(x) for x in ctx.knobs["bug_classes"]}
-        findings = ast_python_mod.scan_files(python_files, repo_root=repo_path, max_files=ctx.knobs.get("max_files"))
+        findings = ast_python_mod.scan_files(python_files, repo_root=repo_path, max_files=max_files)
+        findings += ast_ruby_mod.scan_files(ruby_files, repo_root=repo_path, max_files=max_files)
         if allow_classes is not None:
             findings = [f for f in findings if f["bug_class"] in allow_classes]
         for f in findings:
@@ -80,6 +84,8 @@ class PatchVariantHunter(Probe):
             "source_descriptor": descriptor,
             "index": {"total_indexed": idx["total_indexed"], "languages": list(idx["languages"].keys())},
             "python_file_count": len(python_files),
+            "ruby_file_count": len(ruby_files),
+            "file_count": len(python_files) + len(ruby_files),
             "bug_classes_filter": sorted(allow_classes) if allow_classes else None,
             "finding_count": len(findings),
             "findings": findings,

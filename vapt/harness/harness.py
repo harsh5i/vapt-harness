@@ -5961,7 +5961,11 @@ def cmd_source_probe(args: argparse.Namespace) -> None:
     if args.json:
         print(json.dumps(dict(result), indent=2, sort_keys=False))
     else:
-        print(f"finding_count={result.get('finding_count')} python_files={result.get('python_file_count')}")
+        print(
+            f"finding_count={result.get('finding_count')} "
+            f"files={result.get('file_count')} "
+            f"(python={result.get('python_file_count')} ruby={result.get('ruby_file_count')})"
+        )
         for f in (result.get("findings") or [])[:args.head]:
             print(f"  {f['file']}:{f['line']}  [{f['bug_class']}]  {f['hypothesis']}")
 

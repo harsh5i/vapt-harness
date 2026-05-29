@@ -34,3 +34,9 @@ vapt/harness/tests/results/
 # Holds bug_bounties/<target>/, harness_runs/, evidence, pocs, reports,
 # scripts, env, runtime, templates from the original tree
 engagement/
+
+# Per-target bounty dirs must never enter the public mirror. Only the
+# captive fixtures and the cross-engagement corpus schema travel with the repo.
+vapt/bug_bounties/*/
+!vapt/bug_bounties/_fixtures/
+!vapt/bug_bounties/_shared/

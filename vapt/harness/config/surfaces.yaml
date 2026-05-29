@@ -9,7 +9,11 @@ surfaces:
       - __setstate__
       - marshal.loads
       - dill
-    regex: '(pickle\.load|joblib\.load|yaml\.load|__reduce__|__setstate__|marshal\.loads|dill)'
+      - Marshal.load
+      - YAML.load
+      - Psych.load
+      - Oj.load
+    regex: '(pickle\.load|joblib\.load|yaml\.load|__reduce__|__setstate__|marshal\.loads|dill|Marshal\.(load|restore)|YAML\.load|Psych\.load|Oj\.load)'
   path_traversal:
     fixed:
       - extractall
@@ -33,7 +37,13 @@ surfaces:
       - exec.Command
       - exec(
       - eval(
-    regex: '(subprocess|os\.system|popen|child_process\.(exec|spawn)|Runtime\.exec|ProcessBuilder|exec\.Command|exec\(|eval\(|Command\(|shell)'
+      - Open3.
+      - IO.popen
+      - system(
+      - .constantize
+      - .public_send
+      - const_get
+    regex: '(subprocess|os\.system|popen|child_process\.(exec|spawn)|Runtime\.exec|ProcessBuilder|exec\.Command|exec\(|eval\(|Command\(|shell|Open3\.|IO\.popen|system\(|\.constantize|\.public_send|const_get)'
   network_ssrf:
     fixed:
       - requests.get
@@ -48,7 +58,24 @@ surfaces:
       - http.Get
       - fetch(
       - net/http
-    regex: '(http\.Client|http\.Get|http\.NewRequest|requests\.|httpx\.|aiohttp|axios\.|fetch\(|urlopen|urllib\.request|Dial\(|SSRF|webhook|net/http)'
+      - URI.open
+      - Net::HTTP
+      - open-uri
+      - Excon.
+      - Faraday.
+    regex: '(http\.Client|http\.Get|http\.NewRequest|requests\.|httpx\.|aiohttp|axios\.|fetch\(|urlopen|urllib\.request|Dial\(|SSRF|webhook|net/http|URI\.open|Net::HTTP|open-uri|Excon\.|Faraday\.)'
+  sql_injection:
+    fixed:
+      - find_by_sql
+      - count_by_sql
+      - sanitize_sql
+      - connection.execute
+      - exec_query
+      - .where(
+      - .order(
+      - update_all
+      - delete_all
+    regex: '(find_by_sql|count_by_sql|sanitize_sql|connection\.(execute|exec_query)|\.(where|order|group|having|pluck)\s*\(\s*["''][^"'']*#\{|update_all|delete_all)'
   template_injection:
     fixed:
       - Template(
@@ -56,7 +83,11 @@ surfaces:
       - jinja
       - text/template
       - html/template
-    regex: '(Template\(|render_template|jinja|text/template|html/template)'
+      - ERB.new
+      - 'render inline:'
+      - .html_safe
+      - raw(
+    regex: '(Template\(|render_template|jinja|text/template|html/template|ERB\.new|render\s+(inline|text|html):|\.html_safe|\braw\()'
   authz_boundary:
     fixed:
       - permission
@@ -66,7 +97,12 @@ surfaces:
       - secret
       - credential
       - api_key
-    regex: '(Permission|SessionHasPermission|UserCanSee|Authorize|authz|IsAdmin|Require[A-Z]|permission|authorize|token|secret|credential|api_key)'
+      - guardian
+      - can_see
+      - ensure_logged_in
+      - 'authorize!'
+      - current_user
+    regex: '(Permission|SessionHasPermission|UserCanSee|Authorize|authz|IsAdmin|Require[A-Z]|permission|authorize|token|secret|credential|api_key|guardian|can_see|ensure_logged_in|authorize!|current_user)'
   realtime_websocket:
     fixed:
       - websocket
