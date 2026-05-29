@@ -4693,6 +4693,13 @@ def cmd_ingest_blackbox_run(args: argparse.Namespace) -> None:
 
 
 TAINT_SOURCE_RE = r"(\br\b\.(URL|Body|Header|Form|PostForm)|c\.Params|request\.(args|form|json|headers|cookies|body)|req\.(body|query|params|headers|cookies)|URL\.Query|FormValue|Query\(|\b(argv|args|input|param|params|query|body|url)\b)"
+# "Strong" sources unambiguously denote externally-controlled request data. The
+# bare-name tokens (argv/args/input/param/params/query/body/url) in the full
+# source regex are "weak": a local variable that happens to be named `params`
+# is not request data. STRONG_SOURCE_RE is used for the same-line source check so
+# a shadowed local does not register as a source reaching the sink.
+STRONG_SOURCE_RE = r"(\br\b\.(URL|Body|Header|Form|PostForm)|c\.Params|request\.(args|form|json|headers|cookies|body)|req\.(body|query|params|headers|cookies)|URL\.Query|FormValue|Query\()"
+WEAK_SOURCE_NAMES = {"argv", "args", "input", "param", "params", "query", "body", "url"}
 TAINT_ASSIGN_RE = re.compile(r"^\s*(?:var\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*(?::=|=)")
 
 
@@ -4705,38 +4712,109 @@ def _function_body(src: Path, fn: dict[str, Any]) -> list[str]:
     return lines[int(fn.get("line", 1)) - 1 : int(fn.get("end_line", fn.get("line", 1)))]
 
 
+# Guards that constrain a tainted value before it reaches a sink. When a flow is
+# guarded the value is no longer attacker-controlled in the dangerous position, so
+# the flow is annotated and downranked rather than dropped (recall is preserved —
+# the guard heuristic can be wrong, so true positives must stay in the report).
+GUARD_WHITELIST_RE = re.compile(
+    r"(\.include\?\(|\.member\?\(|%i\[|%w\[|allow_?list|white_?list|ALLOWED_|PERMITTED|\.to_sym\b)"
+)
+
+
+def _flow_guard(lines: list[str], fn_start: int, sink_offset: int, tainted: list[str], sink_line: str) -> str | None:
+    """Return a guard reason if the tainted value is constrained before/at the sink, else None."""
+    # Dispatch where the invoked method name is a setter ("#{x}=") or a string
+    # literal with no interpolation — attacker cannot pick an arbitrary method.
+    if re.search(r"(?:public_send|send|__send__)\(\s*[\"'][^\"']*=[\"']", sink_line):
+        return "constrained_setter_dispatch"
+    if re.search(r"(?:public_send|send|__send__)\(\s*[\"'][^\"'#]+[\"']\s*[,)]", sink_line):
+        return "literal_method_dispatch"
+    # Parameterized query: the value is bound as a separate argument, not
+    # interpolated (#{var}) or concatenated (+ / <<) into the query string. Covers
+    # raw DB.exec/find_by_sql and ActiveRecord query methods whose hash/bind forms
+    # are escaped by the adapter — a real injection requires interpolation, which
+    # the checks below detect and leave unguarded.
+    if re.search(
+        r"(DB\.exec|\.exec\(|exec_query|find_by_sql|count_by_sql|"
+        r"\.(?:where|update_all|delete_all|order|group|having|pluck)\b)",
+        sink_line,
+    ):
+        interpolated = any(re.search(r"#\{[^}]*\b" + re.escape(v) + r"\b[^}]*\}", sink_line) for v in tainted)
+        concatenated = any(
+            re.search(r"(?:\+|<<)\s*" + re.escape(v) + r"\b|\b" + re.escape(v) + r"\s*(?:\+|<<)", sink_line)
+            for v in tainted
+        )
+        if not interpolated and not concatenated:
+            return "parameterized_bind"
+    # Look back over the function body (through the sink line) for a whitelist,
+    # validation/sanitization, signature gate, or literal-branch ternary that
+    # references one of the tainted variables.
+    window = lines[: sink_offset - fn_start + 1]
+    for ln in window:
+        refs = any(re.search(rf"\b{re.escape(v)}\b", ln) for v in tainted)
+        if refs and GUARD_WHITELIST_RE.search(ln):
+            return "whitelist_check"
+        if refs and re.search(DEFAULT_GUARD_DRIFT_REGEX, ln, flags=re.IGNORECASE):
+            return "validation_guard"
+        for v in tainted:
+            if re.search(rf"\b{re.escape(v)}\s*=.*\?\s*[\"'][^\"']*[\"']\s*:\s*[\"'][^\"']*[\"']", ln):
+                return "literal_ternary"
+    for ln in window:
+        if re.search(r"raise\b.*[Ss]ignature", ln) or (re.search(r"\bsign\b", ln) and "!=" in ln):
+            return "signature_gate"
+    return None
+
+
 def _taint_function(fn: dict[str, Any], lines: list[str], sink_regex: str, source_regex: str) -> list[dict[str, Any]]:
     tainted: set[str] = set()
+    shadowed: set[str] = set()
     flows = []
+    fn_start = int(fn.get("line", 1))
     signature = str(fn.get("signature", ""))
     for name in re.findall(r"\b([A-Za-z_][A-Za-z0-9_]*)\b", signature):
         if re.search(source_regex, name, flags=re.IGNORECASE):
             tainted.add(name)
-    for offset, line in enumerate(lines, start=int(fn.get("line", 1))):
-        is_declaration = offset == int(fn.get("line", 1))
+    for offset, line in enumerate(lines, start=fn_start):
+        is_declaration = offset == fn_start
         stripped = line.strip()
         if stripped.startswith(("//", "#", "/*", "*")):
             continue
+        assign = TAINT_ASSIGN_RE.search(line)
+        lhs = assign.group(1) if assign else None
+        rhs = line[assign.end():] if assign else line
+        # Seed taint from bare source tokens used as data, but never from the
+        # assignment target itself (a local named `params` is not request data)
+        # and never from a name that was explicitly shadowed by a local rebinding.
         if re.search(source_regex, line, flags=re.IGNORECASE):
-            match = TAINT_ASSIGN_RE.search(line)
-            if match:
-                tainted.add(match.group(1))
             for name in re.findall(r"\b([A-Za-z_][A-Za-z0-9_]*)\b", line):
+                if name == lhs or name in shadowed:
+                    continue
                 if re.search(source_regex, name, flags=re.IGNORECASE):
                     tainted.add(name)
-        assign = TAINT_ASSIGN_RE.search(line)
-        if assign and any(re.search(rf"\b{re.escape(name)}\b", line) for name in tainted):
-            tainted.add(assign.group(1))
+        if assign:
+            rhs_has_source = bool(re.search(source_regex, rhs, flags=re.IGNORECASE))
+            rhs_has_taint = any(re.search(rf"\b{re.escape(name)}\b", rhs) for name in tainted)
+            if rhs_has_source or rhs_has_taint:
+                tainted.add(lhs)
+                shadowed.discard(lhs)
+            elif lhs.lower() in WEAK_SOURCE_NAMES:
+                # Local variable named like a source but built from non-tainted
+                # data — shadow it so later uses don't re-seed taint.
+                tainted.discard(lhs)
+                shadowed.add(lhs)
         if not is_declaration and re.search(sink_regex, line, flags=re.IGNORECASE):
             matched = sorted(name for name in tainted if re.search(rf"\b{re.escape(name)}\b", line))
-            source_line = bool(re.search(source_regex, line, flags=re.IGNORECASE))
+            source_line = bool(re.search(STRONG_SOURCE_RE, line))
             if matched or source_line:
+                guard = _flow_guard(lines, fn_start, offset, matched, line)
                 flows.append(
                     {
                         "line": offset,
                         "sink_line": line.strip()[:260],
                         "tainted_variables": matched,
                         "source_on_same_line": source_line,
+                        "guard": guard,
+                        "guarded": guard is not None,
                     }
                 )
     return flows
@@ -4765,7 +4843,10 @@ def cmd_taint_trace(args: argparse.Namespace) -> None:
         if not categories.intersection(sink_categories):
             continue
         flows = _taint_function(fn, _function_body(src, fn), sink_regex, source_regex)
+        if getattr(args, "unguarded_only", False):
+            flows = [flow for flow in flows if not flow.get("guarded")]
         if flows:
+            flows.sort(key=lambda flow: (bool(flow.get("guarded")), int(flow["line"])))
             traces.append(
                 {
                     "file": fn.get("file"),
@@ -4773,9 +4854,12 @@ def cmd_taint_trace(args: argparse.Namespace) -> None:
                     "function_line": fn.get("line"),
                     "categories": sorted(categories),
                     "flows": flows,
+                    "unguarded_flows": sum(1 for flow in flows if not flow.get("guarded")),
                 }
             )
-    traces.sort(key=lambda item: (str(item["file"]), int(item["function_line"] or 0)))
+    # Surface traces with at least one unguarded flow first; the guard heuristic
+    # only downranks, so fully-guarded traces stay in the report for review.
+    traces.sort(key=lambda item: (item["unguarded_flows"] == 0, str(item["file"]), int(item["function_line"] or 0)))
     traces = traces[: args.max_traces]
 
     out_dir = run_dir / "taint_traces"
@@ -4808,8 +4892,9 @@ def cmd_taint_trace(args: argparse.Namespace) -> None:
             ]
         )
         for flow in item["flows"]:
+            guard = f" guard=`{flow['guard']}`" if flow.get("guarded") else ""
             md.append(
-                f"- Line `{flow['line']}` vars=`{', '.join(flow['tainted_variables'])}` same_line=`{flow['source_on_same_line']}`: `{flow['sink_line']}`"
+                f"- Line `{flow['line']}` vars=`{', '.join(flow['tainted_variables'])}` same_line=`{flow['source_on_same_line']}`{guard}: `{flow['sink_line']}`"
             )
         md.append("")
     write_text(out_dir / f"taint_trace_{stamp}.md", "\n".join(md))
@@ -12071,6 +12156,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--source-regex", help="override source regex")
     p.add_argument("--sink-category", action="append", help="GRAPH_QUERIES category to treat as sink")
     p.add_argument("--max-traces", type=int, default=100)
+    p.add_argument(
+        "--unguarded-only",
+        action="store_true",
+        help="drop flows constrained by a recognized guard (whitelist/validation/signature/parameterized bind/constrained dispatch)",
+    )
     p.set_defaults(func=cmd_taint_trace)
 
     p = sub.add_parser("guard-drift", help="find sink functions that lack guards used by sibling sink paths")
