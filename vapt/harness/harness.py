@@ -3294,7 +3294,7 @@ GRAPH_QUERIES = {
     "events_broadcasts": r"(NewWebSocketEvent|Publish\(|Broadcast|ShouldSendEvent|EventChannel|websocket)",
     "parsers_decoders": r"(parse|Parse|decode|Decode|Unmarshal|Marshal|json\.|yaml\.|xml\.)",
     "file_storage": r"(open\(|Open\(|ReadFile|WriteFile|extract|Upload|Download|S3|MinIO|FileInfo)",
-    "network_clients": r"(http\.Client|http\.Get|http\.NewRequest|requests\.|httpx\.|aiohttp|axios\.|fetch\(|urlopen|urllib\.request|Dial\(|SSRF|webhook)",
+    "network_clients": r"(http\.Client|http\.Get|http\.NewRequest|requests\.|httpx\.|aiohttp|axios\.|(?<!\.)fetch\(|urlopen|urllib\.request|Dial\(|SSRF|webhook)",
     "process_execution": r"(subprocess|os\.system|exec\(|eval\(|Command\(|exec\.Command|child_process\.(exec|spawn)|Runtime\.exec|ProcessBuilder|popen|shell)",
     "native_unsafe": r"(unsafe|cgo|memcpy|malloc|free\(|reinterpret_cast|strcpy)",
 }
@@ -3978,7 +3978,7 @@ def cmd_proof_plan(args: argparse.Namespace) -> None:
     print(rel(out))
 
 
-SEMANTIC_SUFFIXES = {".go", ".java", ".py", ".js", ".jsx", ".ts", ".tsx"}
+SEMANTIC_SUFFIXES = {".go", ".java", ".py", ".js", ".jsx", ".ts", ".tsx", ".rb"}
 CALL_STOPWORDS = {
     "if",
     "for",
@@ -4012,7 +4012,11 @@ def _is_default_excluded(path: str) -> bool:
         return True
     if parts and parts[0] == "tools":
         return True
+    if "spec" in parts:
+        return True
     name = Path(path).name
+    if name.endswith("_spec.rb") or name.endswith("_test.rb"):
+        return True
     return name.endswith("_test.go") or "test" in name.lower()
 
 
@@ -4072,6 +4076,12 @@ def _function_defs(rel_name: str, text: str) -> list[dict[str, Any]]:
             ("function", r"^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:async\s*)?\("),
             ("class", r"^\s*(?:export\s+)?class\s+([A-Za-z_][A-Za-z0-9_]*)\b"),
         ]
+    elif suffix == ".rb":
+        patterns = [
+            ("function", r"^\s*def\s+(?:self\.)?([A-Za-z_][A-Za-z0-9_]*[!?=]?)"),
+            ("class", r"^\s*class\s+([A-Za-z_][A-Za-z0-9_:]*)"),
+            ("module", r"^\s*module\s+([A-Za-z_][A-Za-z0-9_:]*)"),
+        ]
 
     lines = text.splitlines()
     for index, line in enumerate(lines, start=1):
@@ -4109,13 +4119,17 @@ def _calls_in_body(body: str) -> list[str]:
 
 
 def _semantic_categories(body: str) -> list[str]:
-    cats = []
+    # Dedupe by regex so alias/canonical pairs that share a pattern
+    # (e.g. network_clients/network_ssrf) collapse to one. Insertion order
+    # places aliases first and canonical names last, so last-wins keeps the
+    # canonical surfaces.yaml category name.
+    by_pattern: dict[str, str] = {}
     for category, pattern in GRAPH_QUERIES.items():
         if category == "functions":
             continue
         if re.search(pattern, body, flags=re.IGNORECASE):
-            cats.append(category)
-    return cats
+            by_pattern[pattern] = category
+    return list(by_pattern.values())
 
 
 def cmd_semantic_graph(args: argparse.Namespace) -> None:

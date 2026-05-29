@@ -63,7 +63,7 @@ surfaces:
       - open-uri
       - Excon.
       - Faraday.
-    regex: '(http\.Client|http\.Get|http\.NewRequest|requests\.|httpx\.|aiohttp|axios\.|fetch\(|urlopen|urllib\.request|Dial\(|SSRF|webhook|net/http|URI\.open|Net::HTTP|open-uri|Excon\.|Faraday\.)'
+    regex: '(http\.Client|http\.Get|http\.NewRequest|requests\.|httpx\.|aiohttp|axios\.|(?<!\.)fetch\(|urlopen|urllib\.request|Dial\(|SSRF|webhook|net/http|URI\.open|Net::HTTP|open-uri|Excon\.|Faraday\.)'
   sql_injection:
     fixed:
       - find_by_sql
