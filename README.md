@@ -6,7 +6,7 @@ public advisory feeds, and runs both URL-based probes and source-reading
 probes against authorized targets.
 
 Built across Phases 1-5. Phase 5 (2026-05-28) added the moves described
-in `docs/MYTHOS_SUBSTRATE_PHASE5_ROADMAP_2026-05-28.md`:
+in `management/MYTHOS_SUBSTRATE_PHASE5_ROADMAP_2026-05-28.md`:
 
 - **Move 1** - the outcome-tuning loop is fed with synthetic seeds
   (production runs default-exclude them); OSV queries are cached so
@@ -25,45 +25,42 @@ in `docs/MYTHOS_SUBSTRATE_PHASE5_ROADMAP_2026-05-28.md`:
 
 ## Layout
 
+Entering `vapt/` follows a **Mandatory -> Management -> Records** view:
+
 ```
-vapt/                  Tracked: harness code, doctrine, fixtures
-  harness/             Code + per-package skeletons + agent role files
-  docs/                Doctrine, roadmaps, per-Move evidence (Phase 1-5)
-  bug_bounties/
-    _fixtures/         Captive fixtures (seeded_bugs_repo for Move 5)
-    _shared/           Cross-engagement corpus (schemas + reference data)
+vapt/
+  ONBOARDING.md        Mandatory: the LLM cold-start contract. Read first.
+  harness/             The engine: harness.py, knowledge/, agents/, config/,
+                       probes/, gates/, fixtures/ (captive), corpus/ (learning).
+  engagements/         Records: one subfolder per target, structured as the
+                       harness directs (targets/, adapters/, runs/<t>/<id>/).
+                       Per-target dirs are gitignored - bounty data stays local.
+  management/          Roadmaps, plans, design notes, diagnostics. Context for
+                       improving the harness; not part of execution.
   env/                 Optional full VAPT toolchain requirements
   requirements.txt     Minimum runtime (PyYAML)
-engagement/            Local-only: bounty targets, runs, evidence, pocs,
-                       reports, scripts, runtime, templates. Gitignored.
 README.md
 ```
 
 The `vapt/` subdir preserves the path conventions the harness code uses
-internally (`ROOT / "vapt" / ...`). Treat `vapt/` as the harness package
-and `engagement/` as your private workspace.
+internally (`ROOT / "vapt" / ...`). The engine and its captive fixtures +
+learning corpus travel with the repo; per-target Records do not.
 
-### `engagement/` is local-only
+### `engagements/` is local-only
 
-This folder holds anything tied to a specific authorized engagement:
-
-- `engagement/bug_bounties/<target>/` - per-target metadata, watch
-  configs, prior recon, source mirrors.
-- `engagement/harness_runs/` - operator runs (was `harness/runs/`
-  upstream).
-- `engagement/evidence/`, `engagement/pocs/`, `engagement/reports/` -
-  raw artifacts.
-- `engagement/env/`, `engagement/scripts/`, `engagement/runtime/`,
-  `engagement/templates/` - bootstrap and tooling state.
-
-`engagement/` is in `.gitignore`. It is intentionally not part of the
-GitHub mirror. Treat it as your private working tree.
+Each `engagements/<target>/` holds everything tied to one authorized
+target: the `targets/<id>.yaml` profile, `adapters/`, and
+`runs/<target>/<run-id>/` (recon, evidence, candidate ledger, reports).
+The `.gitignore` excludes `vapt/engagements/*/`, so target data is never
+part of the GitHub mirror. Only the captive fixtures
+(`vapt/harness/fixtures/`) and the cross-engagement corpus schema
+(`vapt/harness/corpus/`) travel with the repo.
 
 ## Using the harness as an LLM operator
 
 If you are an external language model with shell access being asked
 to run authorized vulnerability research with this harness, read
-`LLM_OPERATOR_GUIDE.md` (at the repo root) first. It is the cold-start
+`vapt/ONBOARDING.md` first. It is the cold-start
 contract: identity, authorization, the lifecycle state machine,
 which role file to read at each stage, command reference grouped by
 lifecycle phase, gates and what they reject, common silent failure
@@ -90,7 +87,7 @@ python3 vapt/harness/harness.py outcome-tune --include-synthetic --out /tmp/tune
 
 # Run the source-reading probe against the seeded fixture
 python3 vapt/harness/harness.py source-probe \
-  --local-path "$(pwd)/vapt/bug_bounties/_fixtures/seeded_bugs_repo"
+  --local-path "$(pwd)/vapt/harness/fixtures/seeded_bugs_repo"
 
 # Sweep GHSA for unwatched packages (requires internet)
 python3 vapt/harness/harness.py discovery-sweep --severity-floor high --since-days 7
@@ -123,9 +120,9 @@ Extracted on 2026-05-28 from the in-place engagement tree at
 bug bounty data was intentionally excluded; only captive fixtures and
 the cross-engagement corpus schema travel with the repo.
 
-**Before pushing to any remote**, review `bug_bounties/_shared/corpus/candidates.jsonl`
+**Before pushing to any remote**, review `vapt/harness/corpus/candidates.jsonl`
 for prior research material you may not want public. The seeded
-fixture under `bug_bounties/_fixtures/seeded_bugs_repo/` is fully
+fixture under `vapt/harness/fixtures/seeded_bugs_repo/` is fully
 synthetic and safe.
 
 ## License

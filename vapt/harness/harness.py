@@ -41,6 +41,47 @@ WORKFLOW_ORDER = [
     "submitted",
 ]
 WORKFLOW_TERMINAL = {"triaged", "duplicate", "n_a", "resolved", "paid"}
+TRIAGE_VERDICTS = {"needs_proof", "defended", "false_positive"}
+LOOP_STATE_ORDER = [
+    "recon",
+    "map",
+    "reachability",
+    "hypothesize",
+    "triage",
+    "proof",
+    "enrich",
+    "report",
+]
+# Intent vocabulary: each threat-model token maps to the hypothesis kinds it
+# prioritises and the candidate weakness/CWE/impact keywords it recognises.
+# The intent layer orders hypotheses and nudges scoring toward the operator's
+# stated threat model; it never suppresses off-intent findings.
+INTENT_VOCAB = {
+    "realtime_authz_drift": {
+        "kinds": {"realtime_authz_drift"},
+        "keywords": {"authz", "authorization", "broadcast", "websocket", "permission", "cwe-862", "cwe-863", "cwe-639"},
+    },
+    "route_authz_gap": {
+        "kinds": {"route_authz_gap"},
+        "keywords": {"authz", "authorization", "idor", "access control", "permission", "cwe-862", "cwe-863", "cwe-639", "cwe-285"},
+    },
+    "parser_storage_boundary": {
+        "kinds": {"parser_storage_boundary"},
+        "keywords": {"path traversal", "traversal", "canonicalization", "archive", "deserialization", "cwe-22", "cwe-502"},
+    },
+    "ssrf_outbound_boundary": {
+        "kinds": {"ssrf_outbound_boundary"},
+        "keywords": {"ssrf", "server-side request", "outbound", "redirect", "cwe-918"},
+    },
+    "command_execution_boundary": {
+        "kinds": {"command_execution_boundary"},
+        "keywords": {"command injection", "rce", "shell", "exec", "cwe-78", "cwe-77", "cwe-94"},
+    },
+    "native_memory_boundary": {
+        "kinds": {"native_memory_boundary"},
+        "keywords": {"memory", "buffer", "overflow", "use-after-free", "cwe-119", "cwe-416", "cwe-787"},
+    },
+}
 DEFAULT_BUDGETS = {
     "novelty_gate_minutes": 30,
     "triage_minutes": 120,
@@ -243,7 +284,7 @@ def cmd_init(args: argparse.Namespace) -> None:
     target = load_yaml(target_file)
     target_id = target["id"]
     run_id = args.run_id or now_id()
-    out = ROOT / "vapt" / "harness" / "runs" / target_id / run_id
+    out = ROOT / "vapt" / "engagements" / target_id / "runs" / target_id / run_id
     if out.exists() and any(out.iterdir()):
         raise SystemExit(f"run directory already exists: {out}")
 
@@ -906,6 +947,7 @@ DEFAULT_CANDIDATE = {
     "trust_boundary": "",
     "latest_affected": "unchecked",
     "sink": "",
+    "triage_verdict": "",
     "novelty": "unchecked",
     "dedup": {"status": "unchecked", "matches": [], "checked_at": ""},
     "proof": "not_started",
@@ -2403,7 +2445,7 @@ def cmd_campaign_start(args: argparse.Namespace) -> None:
     profile_path, target = _target_profile_by_arg(args.target)
     target_id = str(target.get("id") or profile_path.stem)
     bb_root = _target_bb_root(profile_path)
-    target_cli_ref = target_id if rel(profile_path).startswith("vapt/bug_bounties/") else rel(profile_path)
+    target_cli_ref = target_id if rel(profile_path).startswith("vapt/engagements/") else rel(profile_path)
     stamp = args.name or dt.datetime.now().strftime("%Y%m%d_%H%M%S")
     campaign_root = run_path(args.out_dir) if args.out_dir else bb_root / "campaigns" / stamp
     campaign_root.mkdir(parents=True, exist_ok=True)
@@ -2810,12 +2852,17 @@ def cmd_candidate_set(args: argparse.Namespace) -> None:
     with candidate_ledger_lock(run_dir):
         data = load_candidates(run_dir)
         cand = find_candidate(data, args.candidate_id)
-        if args.status in WORKFLOW_ORDER or args.status in WORKFLOW_TERMINAL:
-            blockers = workflow_blockers(cand, args.status)
-            if blockers and not args.force:
-                print(json.dumps({"candidate_id": args.candidate_id, "target_status": args.status, "blockers": blockers}, sort_keys=True))
-                raise SystemExit(2)
-        cand["status"] = args.status
+        if args.status is None and getattr(args, "triage_verdict", None) is None:
+            raise SystemExit("candidate-set requires --status and/or --triage-verdict")
+        if args.status is not None:
+            if args.status in WORKFLOW_ORDER or args.status in WORKFLOW_TERMINAL:
+                blockers = workflow_blockers(cand, args.status)
+                if blockers and not args.force:
+                    print(json.dumps({"candidate_id": args.candidate_id, "target_status": args.status, "blockers": blockers}, sort_keys=True))
+                    raise SystemExit(2)
+            cand["status"] = args.status
+        if getattr(args, "triage_verdict", None) is not None:
+            cand["triage_verdict"] = args.triage_verdict
         for key, value in (
             ("entrypoint", args.entrypoint),
             ("trust_boundary", args.trust_boundary),
@@ -2840,15 +2887,16 @@ def cmd_candidate_set(args: argparse.Namespace) -> None:
                 cand[key] = value
         if args.reason:
             cand["decision_reason"] = args.reason
+        event = f"status:{args.status}" if args.status is not None else f"triage_verdict:{args.triage_verdict}"
         cand.setdefault("history", []).append(
             {
                 "at": dt.datetime.now().isoformat(timespec="seconds"),
-                "event": f"status:{args.status}",
+                "event": event,
                 "reason": args.reason or "",
             }
         )
         save_candidates(run_dir, data)
-    print(f"{args.candidate_id} -> {args.status}")
+    print(f"{args.candidate_id} -> {args.status if args.status is not None else 'triage:' + str(args.triage_verdict)}")
 
 
 def cmd_candidates(args: argparse.Namespace) -> None:
@@ -3495,7 +3543,29 @@ def cmd_cluster_variants(args: argparse.Namespace) -> None:
     print(rel(base.with_suffix(".md")))
 
 
-def _score_candidate(cand: dict[str, Any]) -> tuple[int, list[str], list[str]]:
+def _intent_tokens(state: dict[str, Any]) -> list[str]:
+    intent = state.get("intent") or {}
+    tokens = intent.get("threat_model") or []
+    return [t for t in tokens if t in INTENT_VOCAB]
+
+
+def _candidate_intent_match(cand: dict[str, Any], tokens: list[str]) -> str:
+    if not tokens:
+        return ""
+    blob = " ".join(
+        str(cand.get(field) or "").lower()
+        for field in ("kind", "weakness", "cwe", "surface", "title", "impact")
+    )
+    for token in tokens:
+        spec = INTENT_VOCAB.get(token, {})
+        if token in blob or any(kw in blob for kw in spec.get("keywords", set())):
+            return token
+    return ""
+
+
+def _score_candidate(
+    cand: dict[str, Any], intent_tokens: list[str] | None = None
+) -> tuple[int, list[str], list[str]]:
     score = 0
     strengths: list[str] = []
     gaps: list[str] = []
@@ -3597,6 +3667,11 @@ def _score_candidate(cand: dict[str, Any]) -> tuple[int, list[str], list[str]]:
         score += int(round(bounded))
         strengths.append(f"outcome tuning adjustment {bounded}") if bounded > 0 else gaps.append(f"outcome_tuning_adjustment_{bounded}")
 
+    intent_match = _candidate_intent_match(cand, intent_tokens or [])
+    if intent_match:
+        score += 5
+        strengths.append(f"intent-aligned ({intent_match})")
+
     if "proof_passed" in gaps:
         score = min(score, 84)
     if "exact_latest_affected" in gaps:
@@ -3624,6 +3699,8 @@ def cmd_score(args: argparse.Namespace) -> None:
     out_dir = run_dir / "quality"
     out_dir.mkdir(exist_ok=True)
     stamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+    state = read_json(run_dir / "state.json", {})
+    intent_tokens = _intent_tokens(state)
     results = []
     fail_seen = False
     with candidate_ledger_lock(run_dir):
@@ -3633,7 +3710,7 @@ def cmd_score(args: argparse.Namespace) -> None:
             candidates = [find_candidate(data, args.candidate_id)]
 
         for cand in candidates:
-            score, strengths, gaps = _score_candidate(cand)
+            score, strengths, gaps = _score_candidate(cand, intent_tokens)
             band = _quality_band(score)
             cvss_base, cvss_error = cvss3_base_score(str(cand.get("cvss", "")))
             result = {
@@ -3693,14 +3770,7 @@ def _top_files(graph: dict[str, Any], category: str, limit: int) -> list[str]:
     return list((query.get("top_files") or {}).keys())[:limit]
 
 
-def cmd_hypothesize(args: argparse.Namespace) -> None:
-    run_dir = run_path(args.run_dir)
-    state, target = load_run(run_dir)
-    graph = _load_source_graph(run_dir)
-    out_dir = run_dir / "hypotheses"
-    out_dir.mkdir(exist_ok=True)
-    stamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
-
+def _build_hypotheses(graph: dict[str, Any], files_per: int) -> list[dict[str, Any]]:
     hypotheses: list[dict[str, Any]] = []
 
     def add(kind: str, title: str, files: list[str], rationale: str, next_step: str) -> None:
@@ -3711,79 +3781,114 @@ def cmd_hypothesize(args: argparse.Namespace) -> None:
                 "id": f"HYP-{len(hypotheses) + 1:03d}",
                 "kind": kind,
                 "title": title,
-                "files": files[: args.files_per_hypothesis],
+                "files": files[:files_per],
                 "rationale": rationale,
                 "next_step": next_step,
                 "status": "hypothesis",
             }
         )
 
-    event_files = set(_top_files(graph, "events_broadcasts", args.files_per_hypothesis * 2))
-    authz_files = set(_top_files(graph, "authz_checks", args.files_per_hypothesis * 2))
-    route_files = set(_top_files(graph, "routes_handlers", args.files_per_hypothesis * 2))
-    parser_files = set(_top_files(graph, "parsers_decoders", args.files_per_hypothesis * 2))
-    storage_files = set(_top_files(graph, "file_storage", args.files_per_hypothesis * 2))
-    network_files = set(_top_files(graph, "network_clients", args.files_per_hypothesis * 2))
-    exec_files = set(_top_files(graph, "process_execution", args.files_per_hypothesis * 2))
-    native_files = set(_top_files(graph, "native_unsafe", args.files_per_hypothesis * 2))
+    event_files = set(_top_files(graph, "events_broadcasts", files_per * 2))
+    authz_files = set(_top_files(graph, "authz_checks", files_per * 2))
+    route_files = set(_top_files(graph, "routes_handlers", files_per * 2))
+    parser_files = set(_top_files(graph, "parsers_decoders", files_per * 2))
+    storage_files = set(_top_files(graph, "file_storage", files_per * 2))
+    network_files = set(_top_files(graph, "network_clients", files_per * 2))
+    exec_files = set(_top_files(graph, "process_execution", files_per * 2))
+    native_files = set(_top_files(graph, "native_unsafe", files_per * 2))
 
     add(
         "realtime_authz_drift",
         "Compare websocket/event broadcasts against REST permission checks",
-        sorted((event_files & authz_files) or event_files)[: args.files_per_hypothesis],
+        sorted((event_files & authz_files) or event_files)[:files_per],
         "Realtime event publishers and permission checks are high-yield for authz drift.",
         "For each event payload, identify equivalent REST/API read path and build a denied-receiver negative control.",
     )
     add(
         "route_authz_gap",
         "Review route handlers that may depend on missing or inconsistent authz checks",
-        sorted((route_files & authz_files) or route_files)[: args.files_per_hypothesis],
+        sorted((route_files & authz_files) or route_files)[:files_per],
         "Endpoint handlers are externally reachable and must consistently enforce permission boundaries.",
         "Trace handler -> app method -> store call and compare positive user, denied user, guest, and admin behavior.",
     )
     add(
         "parser_storage_boundary",
         "Review parser and file/storage boundaries for traversal or canonicalization drift",
-        sorted((parser_files & storage_files) or (parser_files | storage_files))[: args.files_per_hypothesis],
+        sorted((parser_files & storage_files) or (parser_files | storage_files))[:files_per],
         "Parser/storage intersections often expose path traversal, archive handling, and content confusion issues.",
         "Create benign and malicious path/canonicalization controls, then verify write/read target boundaries.",
     )
     add(
         "ssrf_outbound_boundary",
         "Review outbound network clients for SSRF and internal network guard coverage",
-        sorted(network_files)[: args.files_per_hypothesis],
+        sorted(network_files)[:files_per],
         "Network client surfaces must distinguish trusted admin URLs from attacker-controlled URLs.",
         "Trace caller-controlled URL sources into HTTP clients and verify reserved-IP, redirect, DNS, and scheme handling.",
     )
     add(
         "command_execution_boundary",
         "Review process execution surfaces for shell or argument injection",
-        sorted(exec_files)[: args.files_per_hypothesis],
+        sorted(exec_files)[:files_per],
         "Process execution is high-impact when attacker-controlled data reaches command, args, env, or cwd.",
         "Prove attacker control over command/argument/env separately before building any execution PoC.",
     )
     add(
         "native_memory_boundary",
         "Review native unsafe code for parser or FFI memory-safety candidates",
-        sorted(native_files)[: args.files_per_hypothesis],
+        sorted(native_files)[:files_per],
         "Native and unsafe surfaces need sanitizer/fuzz harness review before exploitability claims.",
         "Identify parser entrypoint, input format, ownership/lifetime model, and available sanitizer or fuzz harness.",
     )
+    return hypotheses
+
+
+def _order_hypotheses_by_intent(
+    hypotheses: list[dict[str, Any]], intent_tokens: list[str]
+) -> list[dict[str, Any]]:
+    intent_kinds = (
+        set().union(*(INTENT_VOCAB[t]["kinds"] for t in intent_tokens))
+        if intent_tokens
+        else set()
+    )
+    for hyp in hypotheses:
+        hyp["intent_priority"] = hyp["kind"] in intent_kinds
+    # Stable sort: intent-prioritised hypotheses first, original order preserved
+    # within each group. Truncation happens after, so priority survives the cap.
+    hypotheses.sort(key=lambda h: 0 if h["intent_priority"] else 1)
+    return hypotheses
+
+
+def cmd_hypothesize(args: argparse.Namespace) -> None:
+    run_dir = run_path(args.run_dir)
+    state, target = load_run(run_dir)
+    graph = _load_source_graph(run_dir)
+    out_dir = run_dir / "hypotheses"
+    out_dir.mkdir(exist_ok=True)
+    stamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    hypotheses = _build_hypotheses(graph, args.files_per_hypothesis)
+    intent_tokens = _intent_tokens(state)
+    _order_hypotheses_by_intent(hypotheses, intent_tokens)
 
     artifact = {
         "target_id": target["id"],
         "run_id": state.get("run_id"),
         "generated_at": dt.datetime.now().isoformat(timespec="seconds"),
         "source_graph": rel(run_dir / "source_graph" / "source_graph.yaml"),
+        "intent": intent_tokens,
         "hypotheses": hypotheses[: args.max_hypotheses],
     }
     dump_yaml(artifact, out_dir / f"hypotheses_{stamp}.yaml")
 
-    md = [f"# Research Hypotheses: {target['id']}", "", f"- Run: `{state.get('run_id')}`", ""]
+    md = [f"# Research Hypotheses: {target['id']}", ""]
+    if intent_tokens:
+        md.append(f"- Intent (threat model): `{', '.join(intent_tokens)}`")
+    md.extend([f"- Run: `{state.get('run_id')}`", ""])
     for hyp in artifact["hypotheses"]:
+        marker = " (intent-priority)" if hyp.get("intent_priority") else ""
         md.extend(
             [
-                f"## {hyp['id']}: {hyp['title']}",
+                f"## {hyp['id']}: {hyp['title']}{marker}",
                 "",
                 f"- Kind: `{hyp['kind']}`",
                 f"- Rationale: {hyp['rationale']}",
@@ -5438,6 +5543,16 @@ def recommend_next_action(run_dir: Path) -> dict[str, Any]:
             "priority": "triage",
         }
     for cand in candidates:
+        verdict = str(cand.get("triage_verdict") or "").strip()
+        if not verdict:
+            return {
+                "command": f"{sys.argv[0]} candidate-set {rel(run_dir)} {cand['id']} --triage-verdict <needs_proof|defended|false_positive>",
+                "candidate_id": cand["id"],
+                "reason": "Flow has no triage verdict; classify it before any proof work.",
+                "priority": "triage",
+            }
+        if verdict in {"defended", "false_positive"}:
+            continue
         if not dedup_checked(cand):
             return {
                 "command": f"{sys.argv[0]} dedup {rel(run_dir)} {cand['id']} --check-osv",
@@ -5504,6 +5619,464 @@ def cmd_next_action(args: argparse.Namespace) -> None:
     else:
         print(result["command"])
         print("reason=" + result["reason"])
+
+
+# ---------------------------------------------------------------------------
+# Orient / submit: the binding loop spine (Phase A).
+#
+# recommend_next_action() is advisory. The orient/submit pair turns it into a
+# contract: orient issues one step (idempotently), the operator runs the
+# command, then submit records the outcome and only advances the cursor when
+# the recommendation actually changed. This is how the harness orchestrates the
+# model rather than trusting the model to self-pace.
+# ---------------------------------------------------------------------------
+
+def step_outcomes_path() -> Path:
+    return ROOT / "vapt" / "harness" / "corpus" / "step_outcomes.jsonl"
+
+
+def _append_step_outcome(row: dict[str, Any]) -> str:
+    path = step_outcomes_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    outcome_id = row.get("outcome_id") or (
+        f"SO-{dt.datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:6]}"
+    )
+    row["outcome_id"] = outcome_id
+    row.setdefault("recorded_at", dt.datetime.now().isoformat(timespec="seconds"))
+    with file_lock(path):
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(row, sort_keys=True) + "\n")
+    return outcome_id
+
+
+def _recommendation_verb(rec: dict[str, Any]) -> str:
+    command = str(rec.get("command") or "")
+    tokens = shlex.split(command) if command else []
+    for tok in tokens[1:]:  # tokens[0] is the harness script path.
+        if tok.startswith("-"):
+            continue
+        return tok
+    return ""
+
+
+def _recommendation_signature(rec: dict[str, Any]) -> str:
+    return (
+        f"{rec.get('priority') or ''}::"
+        f"{_recommendation_verb(rec)}::"
+        f"{rec.get('candidate_id') or ''}"
+    )
+
+
+def _loop_state(rec: dict[str, Any]) -> str:
+    priority = str(rec.get("priority") or "")
+    verb = _recommendation_verb(rec)
+    if priority == "setup":
+        return {
+            "prepare": "recon",
+            "map": "map",
+            "source-graph": "reachability",
+            "semantic-graph": "reachability",
+        }.get(verb, "recon")
+    if priority == "triage":
+        return "triage" if rec.get("candidate_id") else "hypothesize"
+    if priority == "novelty":
+        return "triage"
+    if priority in {"gate", "proof"}:
+        return "proof"
+    if priority in {"root-cause", "variant", "patch-review", "report"}:
+        return "enrich"
+    if priority == "reporting":
+        return "report"
+    return priority or "recon"
+
+
+def _required_result(rec: dict[str, Any]) -> str:
+    return {
+        "setup": "Stage artifact written to state.json.",
+        "triage": "Candidate(s) created or triage_verdict recorded.",
+        "novelty": "OSV novelty check recorded on the candidate.",
+        "gate": "Promotion-gate blockers cleared.",
+        "proof": "Proof plan executed and proof=passed.",
+        "root-cause": "Substantive root_cause recorded.",
+        "variant": "Sibling-surface variant_analysis recorded.",
+        "patch-review": "Patch/advisory diff recorded or scoped out.",
+        "report": "Report-ready blockers cleared.",
+        "reporting": "Report and dashboard regenerated.",
+    }.get(str(rec.get("priority") or ""), "Advance the loop to the next state.")
+
+
+def _step_gate(rec: dict[str, Any]) -> str:
+    if str(rec.get("priority")) == "triage" and rec.get("candidate_id"):
+        return "triage_verdict in {needs_proof,defended,false_positive}"
+    return ""
+
+
+def _build_step(rec: dict[str, Any], step_id: int) -> dict[str, Any]:
+    return {
+        "step_id": step_id,
+        "state": _loop_state(rec),
+        "priority": rec.get("priority", ""),
+        "candidate_id": rec.get("candidate_id", ""),
+        "task": rec.get("reason", ""),
+        "command": rec.get("command", ""),
+        "required_result": _required_result(rec),
+        "gate": _step_gate(rec),
+        "signature": _recommendation_signature(rec),
+    }
+
+
+def _load_cursor(state: dict[str, Any]) -> dict[str, Any]:
+    cursor = dict(state.get("loop_cursor") or {})
+    cursor.setdefault("step_counter", 0)
+    cursor.setdefault("pending_step", None)
+    cursor.setdefault("history", [])
+    cursor.setdefault("states_seen", [])
+    return cursor
+
+
+def _persist_cursor(run_dir: Path, cursor: dict[str, Any]) -> None:
+    state = read_json(run_dir / "state.json", {})
+    state["loop_cursor"] = cursor
+    write_json(run_dir / "state.json", state)
+
+
+def cmd_orient(args: argparse.Namespace) -> None:
+    run_dir = run_path(args.run_dir)
+    state, _ = load_run(run_dir)
+    cursor = _load_cursor(state)
+    rec = recommend_next_action(run_dir)
+    signature = _recommendation_signature(rec)
+    pending = cursor.get("pending_step")
+    if pending and pending.get("signature") == signature:
+        step = pending
+        reissued = True
+    else:
+        cursor["step_counter"] = int(cursor.get("step_counter", 0)) + 1
+        step = _build_step(rec, cursor["step_counter"])
+        cursor["pending_step"] = step
+        _persist_cursor(run_dir, cursor)
+        reissued = False
+    out = {"step": step, "reissued": reissued}
+    if args.json:
+        print(json.dumps(out, indent=2, sort_keys=True))
+    else:
+        print(f"step {step['step_id']} [{step['state']}] {step['task']}")
+        print("run: " + step["command"])
+        if step.get("gate"):
+            print("gate: " + step["gate"])
+        print("expect: " + step["required_result"])
+
+
+def cmd_submit(args: argparse.Namespace) -> None:
+    run_dir = run_path(args.run_dir)
+    state, _ = load_run(run_dir)
+    cursor = _load_cursor(state)
+    pending = cursor.get("pending_step")
+    if not pending:
+        raise SystemExit("no pending step; run `orient` first")
+
+    if pending.get("gate") and args.triage_verdict:
+        if args.triage_verdict not in TRIAGE_VERDICTS:
+            raise SystemExit(f"invalid triage verdict: {args.triage_verdict}")
+        cand_id = pending.get("candidate_id")
+        if not cand_id:
+            raise SystemExit("triage step has no candidate to classify")
+
+        def _set(cand: dict[str, Any]) -> None:
+            cand["triage_verdict"] = args.triage_verdict
+            cand.setdefault("history", []).append(
+                {
+                    "at": dt.datetime.now().isoformat(timespec="seconds"),
+                    "event": f"triage_verdict:{args.triage_verdict}",
+                }
+            )
+
+        update_candidate_locked(run_dir, cand_id, _set)
+
+    # Attribute the outcome to a weakness class so triage verdicts can feed the
+    # tuning loop (Phase C). `cwe` falls back to `weakness`, matching the key
+    # used by _score_candidate and outcome_tuning's weakness_adjustments.
+    weakness_key = ""
+    cand_id = pending.get("candidate_id") or ""
+    if cand_id:
+        cand = next(
+            (c for c in load_candidates(run_dir).get("candidates", []) if c.get("id") == cand_id),
+            None,
+        )
+        if cand:
+            weakness_key = str(cand.get("cwe") or cand.get("weakness") or "")
+
+    outcome_id = _append_step_outcome(
+        {
+            "run": rel(run_dir),
+            "target_id": state.get("target_id") or "",
+            "step_id": pending.get("step_id"),
+            "state": pending.get("state"),
+            "priority": pending.get("priority"),
+            "candidate_id": cand_id,
+            "weakness": weakness_key,
+            "signature": pending.get("signature"),
+            "triage_verdict": args.triage_verdict or "",
+            "note": args.note or "",
+        }
+    )
+
+    new_rec = recommend_next_action(run_dir)
+    new_sig = _recommendation_signature(new_rec)
+    advanced = (new_sig != pending.get("signature")) or (
+        pending.get("priority") == "reporting"
+    )
+    result: dict[str, Any] = {"advanced": advanced, "outcome_id": outcome_id}
+    if advanced:
+        cursor.setdefault("history", []).append(
+            {
+                "step_id": pending.get("step_id"),
+                "state": pending.get("state"),
+                "signature": pending.get("signature"),
+                "outcome_id": outcome_id,
+            }
+        )
+        seen = cursor.setdefault("states_seen", [])
+        st = pending.get("state")
+        if st and st not in seen:
+            seen.append(st)
+        cursor["pending_step"] = None
+        result["next"] = {
+            "command": new_rec.get("command"),
+            "reason": new_rec.get("reason"),
+            "priority": new_rec.get("priority"),
+        }
+    else:
+        result["blocker"] = (
+            "step did not advance the loop; same recommendation still pending"
+        )
+        result["still_pending"] = pending.get("signature")
+    _persist_cursor(run_dir, cursor)
+    if args.json:
+        print(json.dumps(result, indent=2, sort_keys=True))
+    else:
+        if advanced:
+            print(f"advanced; outcome={outcome_id}")
+            print("next: " + str(new_rec.get("command")))
+        else:
+            print("not advanced: " + str(result["blocker"]))
+
+
+def cmd_intent_set(args: argparse.Namespace) -> None:
+    run_dir = run_path(args.run_dir)
+    bad = [t for t in args.threat if t not in INTENT_VOCAB]
+    if bad:
+        raise SystemExit(
+            "unknown threat-model tokens: "
+            + ",".join(bad)
+            + "; choose from "
+            + ",".join(sorted(INTENT_VOCAB))
+        )
+    state = read_json(run_dir / "state.json", {})
+    threat_model = list(dict.fromkeys(args.threat))
+    state["intent"] = {
+        "threat_model": threat_model,
+        "rationale": args.rationale or "",
+        "set_at": dt.datetime.now().isoformat(timespec="seconds"),
+    }
+    write_json(run_dir / "state.json", state)
+    print("intent set: " + ", ".join(threat_model))
+
+
+def cmd_intent_show(args: argparse.Namespace) -> None:
+    run_dir = run_path(args.run_dir)
+    state = read_json(run_dir / "state.json", {})
+    intent = state.get("intent") or {}
+    if args.json:
+        print(json.dumps(intent, indent=2, sort_keys=True))
+        return
+    tokens = intent.get("threat_model") or []
+    if not tokens:
+        print("no intent set; run `intent-set <run> --threat <token> ...`")
+        print("vocabulary: " + ", ".join(sorted(INTENT_VOCAB)))
+        return
+    print("threat model: " + ", ".join(tokens))
+    if intent.get("rationale"):
+        print("rationale: " + intent["rationale"])
+    if intent.get("set_at"):
+        print("set at: " + intent["set_at"])
+
+
+def _loop_integrity_violations(
+    state: dict[str, Any], candidates: list[dict[str, Any]]
+) -> list[str]:
+    violations: list[str] = []
+    cursor = state.get("loop_cursor") or {}
+    seen = list(cursor.get("states_seen") or [])
+    idx = -1
+    for st in seen:
+        if st not in LOOP_STATE_ORDER:
+            violations.append(f"unknown loop state recorded: {st}")
+            continue
+        pos = LOOP_STATE_ORDER.index(st)
+        if pos <= idx:
+            violations.append(f"loop state out of order: {st}")
+        else:
+            idx = pos
+    if "report" in seen:
+        missing = [s for s in LOOP_STATE_ORDER if s != "report" and s not in seen]
+        if missing:
+            violations.append(
+                "report reached but prior states missing: " + ",".join(missing)
+            )
+    for entry in cursor.get("history") or []:
+        if not entry.get("outcome_id"):
+            violations.append(
+                f"history step {entry.get('step_id')} missing outcome_id"
+            )
+    for cand in candidates:
+        proven = (
+            cand.get("proof") == "passed"
+            or substantive(cand.get("root_cause"))
+            or substantive(cand.get("variant_analysis"))
+        )
+        if proven and str(cand.get("triage_verdict") or "") != "needs_proof":
+            violations.append(
+                f"candidate {cand.get('id')} advanced to proof without needs_proof verdict"
+            )
+    return violations
+
+
+def cmd_intent_ordering_check(args: argparse.Namespace) -> None:
+    fixture = (
+        ROOT / "vapt" / "harness" / "tests" / "fixtures" / "intent_ordering" / "source_graph.yaml"
+    )
+    graph = load_yaml(fixture) or {}
+
+    default = _order_hypotheses_by_intent(_build_hypotheses(graph, 3), [])
+    default_top = default[0]["kind"] if default else ""
+
+    cases = [
+        ("command_execution_boundary", "command_execution_boundary"),
+        ("ssrf_outbound_boundary", "ssrf_outbound_boundary"),
+    ]
+    results: list[dict[str, Any]] = []
+    for token, expected_kind in cases:
+        hyps = _order_hypotheses_by_intent(_build_hypotheses(graph, 3), [token])
+        top = hyps[0] if hyps else {}
+        top_kind = top.get("kind", "")
+        passed = (
+            top_kind == expected_kind
+            and bool(top.get("intent_priority"))
+            and top_kind != default_top
+        )
+        results.append(
+            {"intent": token, "expected_top": expected_kind, "top_kind": top_kind, "passed": passed}
+        )
+
+    distinct = len({r["top_kind"] for r in results}) == len(results)
+    all_passed = all(r["passed"] for r in results) and distinct
+
+    out_dir = ROOT / "vapt" / "harness" / "tests" / "results"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+    out = out_dir / f"intent_ordering_{stamp}"
+    write_json(
+        out.with_suffix(".json"),
+        {"passed": all_passed, "default_top": default_top, "distinct": distinct, "results": results},
+    )
+    md = [
+        "# Intent Ordering Check",
+        "",
+        f"- All passed: `{all_passed}`",
+        f"- Default top (no intent): `{default_top}`",
+        f"- Two threat models produce distinct top hypotheses: `{distinct}`",
+        "",
+    ]
+    for r in results:
+        md.append(
+            f"- intent `{r['intent']}` -> top `{r['top_kind']}` (expected `{r['expected_top']}`) passed=`{r['passed']}`"
+        )
+    write_text(out.with_suffix(".md"), "\n".join(md) + "\n")
+
+    if args.json:
+        print(json.dumps({"passed": all_passed, "default_top": default_top, "distinct": distinct, "results": results}, indent=2, sort_keys=True))
+    else:
+        print(f"default top (no intent): {default_top}")
+        for r in results:
+            tag = "PASS" if r["passed"] else "FAIL"
+            print(f"[{tag}] intent={r['intent']} top={r['top_kind']} expected={r['expected_top']}")
+        print(f"distinct_tops={distinct} all_passed={all_passed}")
+    if args.fail and not all_passed:
+        raise SystemExit(2)
+
+
+def cmd_loop_integrity_check(args: argparse.Namespace) -> None:
+    results: list[dict[str, Any]] = []
+    if args.run_dir:
+        run_dir = run_path(args.run_dir)
+        state, _ = load_run(run_dir)
+        cands = load_candidates(run_dir).get("candidates", [])
+        violations = _loop_integrity_violations(state, cands)
+        results.append(
+            {
+                "name": rel(run_dir),
+                "expect_pass": True,
+                "violations": violations,
+                "passed": not violations,
+            }
+        )
+    else:
+        fixture_dir = (
+            ROOT / "vapt" / "harness" / "tests" / "fixtures" / "loop_integrity"
+        )
+        expectations = {
+            "valid_run.json": True,
+            "skipped_state.json": False,
+            "unverdicted_proof.json": False,
+        }
+        for name, expect_pass in expectations.items():
+            payload = read_json(fixture_dir / name, {})
+            violations = _loop_integrity_violations(
+                payload.get("state", {}), payload.get("candidates", [])
+            )
+            clean = not violations
+            results.append(
+                {
+                    "name": name,
+                    "expect_pass": expect_pass,
+                    "violations": violations,
+                    "passed": clean == expect_pass,
+                }
+            )
+    all_passed = all(r["passed"] for r in results)
+
+    out_dir = ROOT / "vapt" / "harness" / "tests" / "results"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+    out = out_dir / f"loop_integrity_{stamp}"
+    write_json(
+        out.with_suffix(".json"), {"passed": all_passed, "results": results}
+    )
+    md = ["# Loop Integrity Check", "", f"- All passed: `{all_passed}`", ""]
+    for r in results:
+        md.extend(
+            [
+                f"## `{r['name']}`",
+                "",
+                f"- Expect pass: `{r['expect_pass']}`",
+                f"- Passed: `{r['passed']}`",
+                "- Violations:",
+            ]
+        )
+        md.extend([f"  - {v}" for v in r["violations"]] or ["  - (none)"])
+        md.append("")
+    write_text(out.with_suffix(".md"), "\n".join(md))
+
+    if args.json:
+        print(json.dumps({"passed": all_passed, "results": results}, indent=2, sort_keys=True))
+    else:
+        for r in results:
+            tag = "PASS" if r["passed"] else "FAIL"
+            print(f"[{tag}] {r['name']} expect_pass={r['expect_pass']} violations={r['violations']}")
+        print("all_passed=" + str(all_passed))
+    if args.fail and not all_passed:
+        raise SystemExit(2)
 
 
 def cmd_budget(args: argparse.Namespace) -> None:
@@ -5579,8 +6152,8 @@ def _knowledge_files() -> list[Path]:
     roots = [
         ROOT / "vapt" / "harness" / "knowledge",
         ROOT / "vapt" / "harness" / "agents",
-        ROOT / "vapt" / "docs",
-        ROOT / "vapt" / "bug_bounties" / "_shared" / "corpus",
+        ROOT / "vapt" / "management",
+        ROOT / "vapt" / "harness" / "corpus",
     ]
     files = []
     for root in roots:
@@ -5677,10 +6250,10 @@ def cmd_explain(args: argparse.Namespace) -> None:
         if path.exists():
             print(f"- `{rel(path)}`")
     examples = {
-        "session-start": f"{sys.argv[0]} session-start vapt/bug_bounties/<target>/runs/<target>/<run-id>",
+        "session-start": f"{sys.argv[0]} session-start vapt/engagements/<target>/runs/<target>/<run-id>",
         "knowledge": f"{sys.argv[0]} knowledge 'websocket authz negative control'",
-        "next-action": f"{sys.argv[0]} next-action vapt/bug_bounties/<target>/runs/<target>/<run-id>",
-        "budget": f"{sys.argv[0]} budget vapt/bug_bounties/<target>/runs/<target>/<run-id>",
+        "next-action": f"{sys.argv[0]} next-action vapt/engagements/<target>/runs/<target>/<run-id>",
+        "budget": f"{sys.argv[0]} budget vapt/engagements/<target>/runs/<target>/<run-id>",
     }
     if args.command in examples:
         print()
@@ -5713,11 +6286,11 @@ def cmd_commands(args: argparse.Namespace) -> None:
 
 
 def cmd_corpus_rebuild(args: argparse.Namespace) -> None:
-    out_dir = ROOT / "vapt" / "bug_bounties" / "_shared" / "corpus"
+    out_dir = ROOT / "vapt" / "harness" / "corpus"
     out_dir.mkdir(parents=True, exist_ok=True)
     out = out_dir / "candidates.jsonl"
     rows = []
-    runs_root = ROOT / "vapt" / "bug_bounties"
+    runs_root = ROOT / "vapt" / "engagements"
     for path in sorted(runs_root.glob("*/runs/*/*/candidates.yaml")):
         run_dir = path.parent
         with contextlib.suppress(Exception):
@@ -5741,11 +6314,11 @@ def cmd_corpus_rebuild(args: argparse.Namespace) -> None:
 
 
 def submissions_path() -> Path:
-    return ROOT / "vapt" / "bug_bounties" / "_shared" / "corpus" / "submissions.jsonl"
+    return ROOT / "vapt" / "harness" / "corpus" / "submissions.jsonl"
 
 
 def candidate_corpus_path() -> Path:
-    return ROOT / "vapt" / "bug_bounties" / "_shared" / "corpus" / "candidates.jsonl"
+    return ROOT / "vapt" / "harness" / "corpus" / "candidates.jsonl"
 
 
 def outcome_tuning_path() -> Path:
@@ -5961,12 +6534,12 @@ def cmd_osv_cache_prefetch(args: argparse.Namespace) -> None:
     for target_id in args.target:
         profile_path, target = _load_target_profile(target_id)
         if not profile_path:
-            legacy = ROOT / "vapt" / "bug_bounties" / target_id / "target.yaml"
+            legacy = ROOT / "vapt" / "engagements" / target_id / "target.yaml"
             if legacy.exists():
                 target = load_yaml(legacy) or {}
                 profile_path = legacy
         if not profile_path:
-            print(f"skip {target_id}: no target profile found under vapt/bug_bounties/", file=sys.stderr)
+            print(f"skip {target_id}: no target profile found under vapt/engagements/", file=sys.stderr)
             continue
         targets.append((target_id, target))
     fetched_packages = 0
@@ -6089,7 +6662,7 @@ def cmd_discovery_sweep(args: argparse.Namespace) -> None:
         token=os.environ.get("GITHUB_TOKEN") or None,
         timeout=args.timeout,
     )
-    target_profile_paths = sorted((ROOT / "vapt" / "bug_bounties").glob("*/targets/*.yaml"))
+    target_profile_paths = sorted((ROOT / "vapt" / "engagements").glob("*/targets/*.yaml"))
     watched = disc.watched_packages(target_profile_paths)
     proposals = disc.propose_targets(advisories, watched)
     written, skipped = disc.write_proposals(proposals, _discovery_queue_dir())
@@ -6440,7 +7013,41 @@ def _finalize_outcome_bucket(bucket: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def outcome_tuning(rows: list[dict[str, Any]], include_synthetic: bool = False) -> dict[str, Any]:
+def _triage_tally(step_rows: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
+    tally: dict[str, dict[str, int]] = {}
+    for row in step_rows:
+        verdict = str(row.get("triage_verdict") or "")
+        weakness = str(row.get("weakness") or "")
+        if verdict not in TRIAGE_VERDICTS or not weakness:
+            continue
+        bucket = tally.setdefault(
+            weakness, {"needs_proof": 0, "defended": 0, "false_positive": 0, "total": 0}
+        )
+        bucket[verdict] += 1
+        bucket["total"] += 1
+    return tally
+
+
+def _triage_score_adjustment(bucket: dict[str, int]) -> float:
+    # false_positive is the strongest negative signal (this weakness class
+    # produced noise); defended is milder; needs_proof is a mild positive.
+    raw = (
+        bucket.get("needs_proof", 0) * 0.75
+        + bucket.get("defended", 0) * -1.0
+        + bucket.get("false_positive", 0) * -2.0
+    )
+    if bucket.get("total", 0) < 2:
+        raw *= 0.5
+    return round(max(-10.0, min(5.0, raw)), 2)
+
+
+def outcome_tuning(
+    rows: list[dict[str, Any]],
+    include_synthetic: bool = False,
+    step_rows: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    if step_rows is None:
+        step_rows = read_jsonl(step_outcomes_path()) if step_outcomes_path().exists() else []
     modules: dict[str, dict[str, Any]] = {}
     evidence: dict[str, dict[str, Any]] = {}
     weaknesses: dict[str, dict[str, Any]] = {}
@@ -6464,16 +7071,34 @@ def outcome_tuning(rows: list[dict[str, Any]], include_synthetic: bool = False) 
             if not key:
                 continue
             _add_outcome(collection.setdefault(key, _stat_bucket()), row)
+
+    # Fold triage verdicts (Phase C) into weakness_adjustments: a weakness class
+    # that keeps producing false_positive/defended verdicts gets scored down even
+    # before any submission outcome exists for it.
+    triage = _triage_tally(step_rows)
+    weakness_adjustments: dict[str, Any] = {}
+    for key in sorted(set(weaknesses) | set(triage)):
+        bucket = _finalize_outcome_bucket(weaknesses.get(key, _stat_bucket()))
+        tb = triage.get(key)
+        if tb:
+            adj = _triage_score_adjustment(tb)
+            bucket["triage"] = tb
+            bucket["triage_score_adjustment"] = adj
+            bucket["score_adjustment"] = round(bucket["score_adjustment"] + adj, 2)
+        weakness_adjustments[key] = bucket
+
     return {
         "generated_at": dt.datetime.now().isoformat(timespec="seconds"),
         "harness_version": HARNESS_VERSION,
         "source": rel(submissions_path()),
+        "triage_source": rel(step_outcomes_path()),
         "terminal_count": len(eligible),
+        "triage_verdict_count": sum(b["total"] for b in triage.values()),
         "synthetic_excluded": synthetic_count if not include_synthetic else 0,
         "synthetic_included": synthetic_count if include_synthetic else 0,
         "module_adjustments": {key: _finalize_outcome_bucket(value) for key, value in sorted(modules.items())},
         "evidence_kind_adjustments": {key: _finalize_outcome_bucket(value) for key, value in sorted(evidence.items())},
-        "weakness_adjustments": {key: _finalize_outcome_bucket(value) for key, value in sorted(weaknesses.items())},
+        "weakness_adjustments": weakness_adjustments,
         "target_adjustments": {key: _finalize_outcome_bucket(value) for key, value in sorted(targets.items())},
     }
 
@@ -6487,12 +7112,14 @@ def load_outcome_tuning() -> dict[str, Any]:
 
 def cmd_outcome_tune(args: argparse.Namespace) -> None:
     rows = read_jsonl(submissions_path())
+    step_rows = read_jsonl(step_outcomes_path()) if step_outcomes_path().exists() else []
     if args.since:
         since = _parse_time(args.since)
         if since:
             rows = [row for row in rows if (_parse_time(row.get("updated_at") or row.get("submitted_at")) or dt.datetime.min) >= since]
+            step_rows = [row for row in step_rows if (_parse_time(row.get("recorded_at")) or dt.datetime.min) >= since]
     include_synthetic = bool(getattr(args, "include_synthetic", False))
-    tuning = outcome_tuning(rows, include_synthetic=include_synthetic)
+    tuning = outcome_tuning(rows, include_synthetic=include_synthetic, step_rows=step_rows)
     out = run_path(args.out) if args.out else outcome_tuning_path()
     dump_yaml(tuning, out)
     md_path = out.with_suffix(".md")
@@ -6501,6 +7128,7 @@ def cmd_outcome_tune(args: argparse.Namespace) -> None:
         "",
         f"- Generated at: `{tuning['generated_at']}`",
         f"- Terminal outcomes: `{tuning['terminal_count']}`",
+        f"- Triage verdicts folded: `{tuning.get('triage_verdict_count', 0)}`",
         f"- Synthetic excluded: `{tuning.get('synthetic_excluded', 0)}`",
         f"- Synthetic included: `{tuning.get('synthetic_included', 0)}`",
         "",
@@ -6516,9 +7144,16 @@ def cmd_outcome_tune(args: argparse.Namespace) -> None:
         lines.append("- No module-level terminal outcomes yet.")
     lines.extend(["", "## Weakness Adjustments", ""])
     for key, item in tuning["weakness_adjustments"].items():
+        triage = item.get("triage")
+        triage_note = ""
+        if triage:
+            triage_note = (
+                f" triage(np={triage['needs_proof']},def={triage['defended']},"
+                f"fp={triage['false_positive']},adj={item.get('triage_score_adjustment')})"
+            )
         lines.append(
             f"- `{key}` adjustment=`{item['score_adjustment']}` acceptance=`{item['acceptance_rate']}` "
-            f"duplicate=`{item['duplicate_rate']}` terminal=`{item['terminal']}`"
+            f"duplicate=`{item['duplicate_rate']}` terminal=`{item['terminal']}`{triage_note}"
         )
     if not tuning["weakness_adjustments"]:
         lines.append("- No weakness-level terminal outcomes yet.")
@@ -6625,7 +7260,7 @@ def cmd_retro(args: argparse.Namespace) -> None:
 
 
 def _load_target_profile(target_id: str) -> tuple[Path, dict[str, Any]] | tuple[None, dict[str, Any]]:
-    for path in sorted((ROOT / "vapt" / "bug_bounties").glob(f"*/targets/{target_id}.yaml")):
+    for path in sorted((ROOT / "vapt" / "engagements").glob(f"*/targets/{target_id}.yaml")):
         if path.exists():
             return path, load_yaml(path) or {}
     for path in _target_profile_paths():
@@ -6636,7 +7271,7 @@ def _load_target_profile(target_id: str) -> tuple[Path, dict[str, Any]] | tuple[
 
 
 def _target_profile_paths() -> list[Path]:
-    return sorted((ROOT / "vapt" / "bug_bounties").glob("*/targets/*.yaml"))
+    return sorted((ROOT / "vapt" / "engagements").glob("*/targets/*.yaml"))
 
 
 def _term_set(text: str) -> set[str]:
@@ -7026,7 +7661,7 @@ def module_contract_path() -> Path:
 
 
 def _adapter_manifest_paths(target: str | None = None) -> list[Path]:
-    root = ROOT / "vapt" / "bug_bounties"
+    root = ROOT / "vapt" / "engagements"
     if target:
         profile_path, _target = _target_profile_by_arg(target)
         bb_root = _target_bb_root(profile_path)
@@ -7096,7 +7731,7 @@ def _adapter_check_one(path: Path, catalog: dict[str, dict[str, Any]], contract:
             allow_harness_fixture = "vapt/harness/tests/fixtures" in rel(path)
             if "vapt/harness" in command_text and not allow_harness_fixture:
                 module_errors.append("adapter command points at core harness instead of target-local runtime")
-            if "vapt/bug_bounties/" not in command_text and not allow_harness_fixture:
+            if "vapt/engagements/" not in command_text and not allow_harness_fixture:
                 module_warnings.append("adapter command does not visibly reference target-local runtime")
 
         with contextlib.suppress(Exception):
@@ -8192,13 +8827,13 @@ def cmd_campaign_gate(args: argparse.Namespace) -> None:
     target_id = str(campaign.get("target_id") or "")
     is_harness_fixture = adapter_manifest.startswith("vapt/harness/tests/fixtures/")
     if not is_harness_fixture:
-        bb_root = ROOT / "vapt" / "bug_bounties"
-        if not str(adapter_manifest).startswith("vapt/bug_bounties/"):
+        bb_root = ROOT / "vapt" / "engagements"
+        if not str(adapter_manifest).startswith("vapt/engagements/"):
             leak_ok = False
-            leak_details.append(f"non-fixture adapter is outside bug_bounties: {adapter_manifest}")
+            leak_details.append(f"non-fixture adapter is outside engagements: {adapter_manifest}")
         if not _path_is_under(campaign_dir, bb_root):
             leak_ok = False
-            leak_details.append(f"target campaign dir is outside bug_bounties: {rel(campaign_dir)}")
+            leak_details.append(f"target campaign dir is outside engagements: {rel(campaign_dir)}")
     else:
         fixture_root = ROOT / "vapt" / "harness" / "tests"
         if not _path_is_under(campaign_dir, fixture_root):
@@ -11304,6 +11939,40 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_next_action)
 
+    p = sub.add_parser("orient", help="issue the next binding step (step contract)")
+    p.add_argument("run_dir")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_orient)
+
+    p = sub.add_parser("intent-set", help="record the run's threat model (orders hypotheses, weights scoring)")
+    p.add_argument("run_dir")
+    p.add_argument("--threat", action="append", required=True, choices=sorted(INTENT_VOCAB), help="threat-model token (repeatable, priority order)")
+    p.add_argument("--rationale", default="", help="why this threat model for this target")
+    p.set_defaults(func=cmd_intent_set)
+
+    p = sub.add_parser("intent-show", help="show the run's recorded threat model")
+    p.add_argument("run_dir")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_intent_show)
+
+    p = sub.add_parser("submit", help="record the pending step outcome and advance the loop cursor")
+    p.add_argument("run_dir")
+    p.add_argument("--triage-verdict", choices=sorted(TRIAGE_VERDICTS), help="verdict to record when the pending step is a triage gate")
+    p.add_argument("--note", default="", help="free-text note attached to the step outcome")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_submit)
+
+    p = sub.add_parser("loop-integrity-check", help="validate the loop cursor (run or bundled fixtures)")
+    p.add_argument("--run-dir", default="", help="validate a specific run; omit to run bundled fixtures")
+    p.add_argument("--fail", action="store_true", help="exit non-zero if any check fails")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_loop_integrity_check)
+
+    p = sub.add_parser("intent-ordering-check", help="validate intent reorders hypotheses (bundled fixture)")
+    p.add_argument("--fail", action="store_true", help="exit non-zero if any check fails")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_intent_ordering_check)
+
     p = sub.add_parser("budget", help="compare run elapsed time with target budgets")
     p.add_argument("run_dir")
     p.add_argument("--json", action="store_true")
@@ -11455,7 +12124,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_outcome_tune_check)
 
     p = sub.add_parser("phase2-check", help="run Phase 2 feedback-loop acceptance checks")
-    p.add_argument("--run-dir", default="vapt/bug_bounties/demo-target/runs/demo-target/2026-05-16-initial")
+    p.add_argument("--run-dir", default="vapt/engagements/demo-target/runs/demo-target/2026-05-16-initial")
     p.add_argument("--target-id", default="demo-target")
     p.add_argument("--refresh-retro", action="store_true")
     p.set_defaults(func=cmd_phase2_check)
@@ -11817,7 +12486,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_osv_cache_stats)
     sp = osv_sub.add_parser("prefetch", help="warm the cache for one or more targets")
-    sp.add_argument("target", nargs="+", help="target id(s) under vapt/bug_bounties/")
+    sp.add_argument("target", nargs="+", help="target id(s) under vapt/engagements/")
     sp.add_argument("--timeout", type=int, default=20)
     sp.add_argument("--refresh", action="store_true", help="bypass cache during prefetch (force fresh fetch)")
     sp.add_argument("--json", action="store_true")
@@ -11997,7 +12666,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("candidate-set", help="update candidate status")
     p.add_argument("run_dir")
     p.add_argument("candidate_id")
-    p.add_argument("--status", required=True)
+    p.add_argument("--status", default=None)
+    p.add_argument("--triage-verdict", choices=sorted(TRIAGE_VERDICTS), help="classify the flow during triage before any proof work")
     p.add_argument("--reason")
     p.add_argument("--force", action="store_true", help="override canonical workflow preconditions with history reason")
     p.add_argument("--entrypoint")

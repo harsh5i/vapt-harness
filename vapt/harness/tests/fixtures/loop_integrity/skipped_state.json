@@ -1,0 +1,16 @@
+{
+  "_doc": "Invalid: reached report without passing through map/hypothesize/triage/proof/enrich. The cursor jumped states, so the loop-integrity check must fail.",
+  "state": {
+    "loop_cursor": {
+      "step_counter": 3,
+      "pending_step": null,
+      "states_seen": ["recon", "reachability", "report"],
+      "history": [
+        {"step_id": 1, "state": "recon", "signature": "setup::prepare::", "outcome_id": "SO-1-aaa"},
+        {"step_id": 2, "state": "reachability", "signature": "setup::semantic-graph::", "outcome_id": "SO-2-bbb"},
+        {"step_id": 3, "state": "report", "signature": "reporting::report::", "outcome_id": "SO-3-ccc"}
+      ]
+    }
+  },
+  "candidates": []
+}

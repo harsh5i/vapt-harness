@@ -14,13 +14,33 @@ This guide unifies and points at three existing surfaces:
   `scoring.yaml` - doctrine and the candidate state machine.
 - `vapt/harness/agents/*.md` - per-role checklists (you adopt one at a
   time depending on the lifecycle stage).
-- `vapt/docs/MYTHOS_SUBSTRATE_PHASE5_ROADMAP_2026-05-28.md` and
+- `vapt/management/MYTHOS_SUBSTRATE_PHASE5_ROADMAP_2026-05-28.md` and
   per-Move evidence docs - architecture context and current capability
   state.
 
 If this guide and any of the above disagree, follow this guide for
 operating norms and the existing docs for technical contracts. Report
 the conflict in your session output so the maintainer can reconcile.
+
+### Repository layout (Mandatory -> Management -> Records)
+
+When you enter `vapt/` you will see exactly four things:
+
+- `ONBOARDING.md` (this file) - the mandatory cold-start contract.
+- `harness/` - the engine: `harness.py`, `knowledge/`, `agents/`,
+  `config/`, `probes/`, `gates/`, captive `fixtures/`, and the
+  cross-engagement learning `corpus/` (candidates + submissions).
+  Everything needed to *run* the harness lives here.
+- `engagements/` - the Records bucket. One subfolder per target,
+  structured as the harness directs: `engagements/<target>/targets/`,
+  `adapters/`, and `runs/<target>/<run-id>/`. This is gitignored
+  per-target; bounty data never enters the public mirror.
+- `management/` - roadmaps, plans, design notes, diagnostics. Context
+  for *improving* the harness, not part of execution.
+
+Records are written under `engagements/`; never write findings into
+`management/` or as prose side-files. The ledger under each run dir is
+the only sanctioned home for candidates.
 
 ---
 
@@ -31,7 +51,7 @@ make authorization decisions for you. The hard rules are:
 
 1. **Only act on declared, authorized targets.** A target is declared
    when a `targets/<id>.yaml` profile exists under
-   `vapt/bug_bounties/<program>/` AND that program's scope explicitly
+   `vapt/engagements/<program>/` AND that program's scope explicitly
    permits the action you are about to take.
 2. **Never run active scans, exploitation, denial-of-service, or
    credential attacks** unless the program's ROE explicitly permits
@@ -63,10 +83,10 @@ python3 vapt/harness/harness.py tools-capability --json
 python3 vapt/harness/harness.py tool-health --json
 
 # 2. What targets exist and which are mine?
-ls vapt/bug_bounties/*/targets/*.yaml
+ls vapt/engagements/*/targets/*.yaml
 
 # 3. What ongoing work is there?
-ls vapt/harness/runs/ 2>/dev/null
+ls -d vapt/engagements/*/runs/*/* 2>/dev/null
 ls vapt/harness/queue/discovery/ 2>/dev/null
 
 # 4. What does current doctrine say?
@@ -105,6 +125,62 @@ job is to push a candidate forward one transition at a time and never
 to skip steps. If a stage cannot complete (e.g., no patch available),
 record the reason in the candidate's `notes` and continue; do not
 omit the artifact.
+
+### 3.1 The binding loop: `orient` -> run -> `submit`
+
+Do not choose commands by intuition. The harness decides the next step;
+you execute it. The loop is:
+
+```
+orient <run>        # harness issues ONE step: a command, a gate, an expected result
+<run the command>   # do exactly what the step says
+submit <run> [...]  # record the outcome; the cursor advances only if the
+                    # recommendation actually changed
+```
+
+- `orient` is idempotent: calling it again before you act re-emits the
+  same step (`reissued: true`). It never skips ahead.
+- `submit` will **not** advance the cursor if the step's required result
+  is still missing - it returns `advanced: false` with a blocker. That is
+  the harness refusing to let you fake progress.
+- Triage is a hard gate. A flow with no `triage_verdict` blocks all proof
+  work. `orient` will hand you a `candidate-set ... --triage-verdict
+  <needs_proof|defended|false_positive>` step; classify the flow, then
+  `submit --triage-verdict <verdict>`. Only `needs_proof` candidates
+  proceed to dedup/gate/proof. `defended` and `false_positive` are
+  retired with no further work.
+- Every advance writes a row to `step_outcomes.jsonl` (the closed learning
+  loop, separate from bounty `submissions.jsonl`) and appends to the run's
+  `loop_cursor.history` with an `outcome_id`.
+- `loop-integrity-check --run-dir <run>` audits the cursor: states must be
+  reached in canonical order, no proof without a `needs_proof` verdict,
+  every history step carries an `outcome_id`.
+
+`next-action` still exists as a read-only advisory view, but the binding
+contract is `orient`/`submit`. Drive the harness through them.
+
+### 3.2 Intent: declare the threat model before you hypothesize
+
+Set the run's threat model early so the harness orients itself, not just
+you. `intent-set <run> --threat <token> [--threat <token> ...]` records a
+prioritised threat model from this vocabulary:
+
+```
+realtime_authz_drift  route_authz_gap        parser_storage_boundary
+ssrf_outbound_boundary  command_execution_boundary  native_memory_boundary
+```
+
+Effect:
+
+- `hypothesize` floats hypotheses whose kind matches the intent to the top
+  (and marks them `intent-priority`), so they survive the `--max-hypotheses`
+  cap instead of being truncated away.
+- `score` adds a bounded `+5` to candidates whose weakness/CWE/impact aligns
+  with the intent (recorded as an `intent-aligned` strength).
+
+Intent **never suppresses** off-intent findings - it only orders and nudges.
+A real bug outside your stated threat model still scores and still reports.
+`intent-show <run>` prints the current threat model.
 
 ---
 
@@ -305,12 +381,12 @@ Goal: take a hypothetical authorized PyPI package `widgety` from
 
 ```bash
 # 1. Make sure the program/target is declared and authorized.
-ls vapt/bug_bounties/widgety/targets/widgety.yaml  # must exist
+ls vapt/engagements/widgety/targets/widgety.yaml  # must exist
 
 # 2. Initialize a run.
 RUN_ID=2026-05-29-initial
 harness init widgety --run-id $RUN_ID
-RUN_DIR=vapt/bug_bounties/widgety/runs/widgety/$RUN_ID
+RUN_DIR=vapt/engagements/widgety/runs/widgety/$RUN_ID
 
 # 3. Prepare and map the source.
 harness prepare $RUN_DIR
@@ -363,7 +439,7 @@ reconstruct state by reading the run directory alone.
 
 ## 9. What is explicitly out of scope for you as the LLM
 
-- Editing files outside `vapt/bug_bounties/<program>/runs/<run_id>/`
+- Editing files outside `vapt/engagements/<program>/runs/<run_id>/`
   except for the harness's own ledger writes.
 - Installing system packages, modifying `~/.venv-vapt`, pulling
   container images. These are operator-environment changes; surface

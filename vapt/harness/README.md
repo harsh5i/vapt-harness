@@ -11,34 +11,34 @@ attacker control, reachability, novelty, and proof.
 ## Layout
 
 - `targets/`: reusable target-profile templates only. BB target profiles live
-  under `vapt/bug_bounties/<target>/targets/`.
+  under `vapt/engagements/<target>/targets/`.
 - `agents/`: role prompts/checklists for focused review passes
 - `runs/`: reusable harness fixtures only. BB run evidence lives under
-  `vapt/bug_bounties/<target>/runs/`.
+  `vapt/engagements/<target>/runs/`.
 - `templates/`: report and candidate templates
 - `harness.py`: CLI entrypoint
 
 ## Quick Start
 
 ```sh
-.venv-vapt/bin/python vapt/harness/harness.py init vapt/bug_bounties/demo-pyml/targets/demo-pyml.yaml
-.venv-vapt/bin/python vapt/harness/harness.py session-start vapt/bug_bounties/demo-pyml/runs/demo-pyml/<run-id>
+.venv-vapt/bin/python vapt/harness/harness.py init vapt/engagements/demo-pyml/targets/demo-pyml.yaml
+.venv-vapt/bin/python vapt/harness/harness.py session-start vapt/engagements/demo-pyml/runs/demo-pyml/<run-id>
 .venv-vapt/bin/python vapt/harness/harness.py campaign-start demo-pyml --name <campaign-id>
 .venv-vapt/bin/python vapt/harness/harness.py campaign-start demo-pyml --name <campaign-id> --refresh-advisories
-.venv-vapt/bin/python vapt/harness/harness.py prepare vapt/bug_bounties/demo-pyml/runs/demo-pyml/<run-id>
-.venv-vapt/bin/python vapt/harness/harness.py map vapt/bug_bounties/demo-pyml/runs/demo-pyml/<run-id>
+.venv-vapt/bin/python vapt/harness/harness.py prepare vapt/engagements/demo-pyml/runs/demo-pyml/<run-id>
+.venv-vapt/bin/python vapt/harness/harness.py map vapt/engagements/demo-pyml/runs/demo-pyml/<run-id>
 .venv-vapt/bin/python vapt/harness/harness.py surfaces-test
-.venv-vapt/bin/python vapt/harness/harness.py source-graph vapt/bug_bounties/demo-pyml/runs/demo-pyml/<run-id>
-.venv-vapt/bin/python vapt/harness/harness.py semantic-graph vapt/bug_bounties/demo-pyml/runs/demo-pyml/<run-id>
-.venv-vapt/bin/python vapt/harness/harness.py hypothesize vapt/bug_bounties/demo-pyml/runs/demo-pyml/<run-id>
-.venv-vapt/bin/python vapt/harness/harness.py status vapt/bug_bounties/demo-pyml/runs/demo-pyml/<run-id>
-.venv-vapt/bin/python vapt/harness/harness.py next-action vapt/bug_bounties/demo-pyml/runs/demo-pyml/<run-id>
+.venv-vapt/bin/python vapt/harness/harness.py source-graph vapt/engagements/demo-pyml/runs/demo-pyml/<run-id>
+.venv-vapt/bin/python vapt/harness/harness.py semantic-graph vapt/engagements/demo-pyml/runs/demo-pyml/<run-id>
+.venv-vapt/bin/python vapt/harness/harness.py hypothesize vapt/engagements/demo-pyml/runs/demo-pyml/<run-id>
+.venv-vapt/bin/python vapt/harness/harness.py status vapt/engagements/demo-pyml/runs/demo-pyml/<run-id>
+.venv-vapt/bin/python vapt/harness/harness.py next-action vapt/engagements/demo-pyml/runs/demo-pyml/<run-id>
 ```
 
 Add a candidate:
 
 ```sh
-.venv-vapt/bin/python vapt/harness/harness.py candidate-add vapt/bug_bounties/demo-pyml/runs/demo-pyml/<run-id> \
+.venv-vapt/bin/python vapt/harness/harness.py candidate-add vapt/engagements/demo-pyml/runs/demo-pyml/<run-id> \
   --title "Trusted type bypass in loader" \
   --surface "demo-pyml.io.load" \
   --weakness "CWE-502" \
@@ -53,10 +53,10 @@ Add a candidate:
 Prove a candidate with a bounded local command:
 
 ```sh
-.venv-vapt/bin/python vapt/harness/harness.py dedup vapt/bug_bounties/demo-pyml/runs/demo-pyml/<run-id> CAND-001 \
+.venv-vapt/bin/python vapt/harness/harness.py dedup vapt/engagements/demo-pyml/runs/demo-pyml/<run-id> CAND-001 \
   --check-osv --osv-ecosystem PyPI --osv-package demo-pyml
-.venv-vapt/bin/python vapt/harness/harness.py gate vapt/bug_bounties/demo-pyml/runs/demo-pyml/<run-id> CAND-001 --promote
-.venv-vapt/bin/python vapt/harness/harness.py prove vapt/bug_bounties/demo-pyml/runs/demo-pyml/<run-id> CAND-001 \
+.venv-vapt/bin/python vapt/harness/harness.py gate vapt/engagements/demo-pyml/runs/demo-pyml/<run-id> CAND-001 --promote
+.venv-vapt/bin/python vapt/harness/harness.py prove vapt/engagements/demo-pyml/runs/demo-pyml/<run-id> CAND-001 \
   --cwd . \
   --timeout 60 \
   --cmd "python vapt/pocs/demo-pyml/2026-05-15/probe_demo-pyml_controls.py"
@@ -65,21 +65,21 @@ Prove a candidate with a bounded local command:
 Run variant analysis after a proof passes:
 
 ```sh
-.venv-vapt/bin/python vapt/harness/harness.py variant vapt/bug_bounties/demo-pyml/runs/demo-pyml/<run-id> CAND-001 \
+.venv-vapt/bin/python vapt/harness/harness.py variant vapt/engagements/demo-pyml/runs/demo-pyml/<run-id> CAND-001 \
   --pattern "trusted_types" \
   --notes "Search sibling trust-boundary checks before reporting"
-.venv-vapt/bin/python vapt/harness/harness.py cluster-variants vapt/bug_bounties/demo-pyml/runs/demo-pyml/<run-id> CAND-001
+.venv-vapt/bin/python vapt/harness/harness.py cluster-variants vapt/engagements/demo-pyml/runs/demo-pyml/<run-id> CAND-001
 ```
 
 Capture patch/advisory diff artifacts:
 
 ```sh
-.venv-vapt/bin/python vapt/harness/harness.py patch-diff vapt/bug_bounties/demo-pyml/runs/demo-pyml/<run-id> CAND-001 \
+.venv-vapt/bin/python vapt/harness/harness.py patch-diff vapt/engagements/demo-pyml/runs/demo-pyml/<run-id> CAND-001 \
   --base v0.12.0 \
   --head v0.13.0 \
   --path demo-pyml/io \
   --grep "trusted"
-.venv-vapt/bin/python vapt/harness/harness.py patch-mine vapt/bug_bounties/demo-pyml/runs/demo-pyml/<run-id> \
+.venv-vapt/bin/python vapt/harness/harness.py patch-mine vapt/engagements/demo-pyml/runs/demo-pyml/<run-id> \
   --range v0.12.0..v0.13.0 \
   --path demo-pyml/io
 ```
@@ -87,31 +87,31 @@ Capture patch/advisory diff artifacts:
 Generate a draft:
 
 ```sh
-.venv-vapt/bin/python vapt/harness/harness.py proof-plan vapt/bug_bounties/demo-pyml/runs/demo-pyml/<run-id> CAND-001
-.venv-vapt/bin/python vapt/harness/harness.py flow-trace vapt/bug_bounties/demo-pyml/runs/demo-pyml/<run-id> CAND-001
-.venv-vapt/bin/python vapt/harness/harness.py taint-trace vapt/bug_bounties/demo-pyml/runs/demo-pyml/<run-id>
-.venv-vapt/bin/python vapt/harness/harness.py test-skeleton vapt/bug_bounties/demo-pyml/runs/demo-pyml/<run-id> CAND-001
-.venv-vapt/bin/python vapt/harness/harness.py ledger-sqlite vapt/bug_bounties/demo-pyml/runs/demo-pyml/<run-id>
-.venv-vapt/bin/python vapt/harness/harness.py retro vapt/bug_bounties/demo-pyml/runs/demo-pyml/<run-id>
+.venv-vapt/bin/python vapt/harness/harness.py proof-plan vapt/engagements/demo-pyml/runs/demo-pyml/<run-id> CAND-001
+.venv-vapt/bin/python vapt/harness/harness.py flow-trace vapt/engagements/demo-pyml/runs/demo-pyml/<run-id> CAND-001
+.venv-vapt/bin/python vapt/harness/harness.py taint-trace vapt/engagements/demo-pyml/runs/demo-pyml/<run-id>
+.venv-vapt/bin/python vapt/harness/harness.py test-skeleton vapt/engagements/demo-pyml/runs/demo-pyml/<run-id> CAND-001
+.venv-vapt/bin/python vapt/harness/harness.py ledger-sqlite vapt/engagements/demo-pyml/runs/demo-pyml/<run-id>
+.venv-vapt/bin/python vapt/harness/harness.py retro vapt/engagements/demo-pyml/runs/demo-pyml/<run-id>
 .venv-vapt/bin/python vapt/harness/harness.py corpus suggest demo-pyml
 .venv-vapt/bin/python vapt/harness/harness.py pick-target
-.venv-vapt/bin/python vapt/harness/harness.py campaign-plan demo-pyml --out vapt/bug_bounties/demo-pyml/docs/CAMPAIGN_PLAN_<date>.md
+.venv-vapt/bin/python vapt/harness/harness.py campaign-plan demo-pyml --out vapt/engagements/demo-pyml/docs/CAMPAIGN_PLAN_<date>.md
 .venv-vapt/bin/python vapt/harness/harness.py campaign-adapter-check --target grafana_oss --fail
 .venv-vapt/bin/python vapt/harness/harness.py mutation-plan grafana_oss --module ssrf_callback
-.venv-vapt/bin/python vapt/harness/harness.py mutation-coverage-check vapt/bug_bounties/grafana-oss/tests/mutation-enforcement-smoke-orchestrator --fail
+.venv-vapt/bin/python vapt/harness/harness.py mutation-coverage-check vapt/engagements/grafana-oss/tests/mutation-enforcement-smoke-orchestrator --fail
 .venv-vapt/bin/python vapt/harness/harness.py patch-first-plan demo-pyml
 .venv-vapt/bin/python vapt/harness/harness.py campaign-dashboard grafana-oss
 .venv-vapt/bin/python vapt/harness/harness.py campaign-run --adapter vapt/harness/tests/fixtures/adapters/fixture_adapter.yaml --validate-mutation --fail
 .venv-vapt/bin/python vapt/harness/harness.py campaign-gate vapt/harness/tests/results/campaign-run-fixture/orchestrator --revalidate-mutation --fail
 .venv-vapt/bin/python vapt/harness/harness.py candidate-link-campaign vapt/harness/tests/results/candidate-campaign-gate-fixture CAND-001 --campaign-dir vapt/harness/tests/results/campaign-run-fixture/orchestrator --module authz_matrix --fail
 .venv-vapt/bin/python vapt/harness/harness.py probes
-.venv-vapt/bin/python vapt/harness/harness.py playbook vapt/bug_bounties/demo-pyml/runs/demo-pyml/<run-id>
-.venv-vapt/bin/python vapt/harness/harness.py codeql-workflow vapt/bug_bounties/demo-pyml/runs/demo-pyml/<run-id>
-.venv-vapt/bin/python vapt/harness/harness.py refine vapt/bug_bounties/demo-pyml/runs/demo-pyml/<run-id> CAND-001
-.venv-vapt/bin/python vapt/harness/harness.py report vapt/bug_bounties/demo-pyml/runs/demo-pyml/<run-id>
-.venv-vapt/bin/python vapt/harness/harness.py report-gate vapt/bug_bounties/demo-pyml/runs/demo-pyml/<run-id> CAND-001 --fail
-.venv-vapt/bin/python vapt/harness/harness.py dashboard vapt/bug_bounties/demo-pyml/runs/demo-pyml/<run-id>
-.venv-vapt/bin/python vapt/harness/harness.py score vapt/bug_bounties/demo-pyml/runs/demo-pyml/<run-id>
+.venv-vapt/bin/python vapt/harness/harness.py playbook vapt/engagements/demo-pyml/runs/demo-pyml/<run-id>
+.venv-vapt/bin/python vapt/harness/harness.py codeql-workflow vapt/engagements/demo-pyml/runs/demo-pyml/<run-id>
+.venv-vapt/bin/python vapt/harness/harness.py refine vapt/engagements/demo-pyml/runs/demo-pyml/<run-id> CAND-001
+.venv-vapt/bin/python vapt/harness/harness.py report vapt/engagements/demo-pyml/runs/demo-pyml/<run-id>
+.venv-vapt/bin/python vapt/harness/harness.py report-gate vapt/engagements/demo-pyml/runs/demo-pyml/<run-id> CAND-001 --fail
+.venv-vapt/bin/python vapt/harness/harness.py dashboard vapt/engagements/demo-pyml/runs/demo-pyml/<run-id>
+.venv-vapt/bin/python vapt/harness/harness.py score vapt/engagements/demo-pyml/runs/demo-pyml/<run-id>
 ```
 
 ## Promotion Gate

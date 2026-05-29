@@ -1,0 +1,23 @@
+{
+  "_doc": "Clean full-path run: states reached in canonical order, every history step carries an outcome_id, and the one proven candidate was verdicted needs_proof before any proof work.",
+  "state": {
+    "loop_cursor": {
+      "step_counter": 8,
+      "pending_step": null,
+      "states_seen": ["recon", "map", "reachability", "hypothesize", "triage", "proof", "enrich", "report"],
+      "history": [
+        {"step_id": 1, "state": "recon", "signature": "setup::prepare::", "outcome_id": "SO-1-aaa"},
+        {"step_id": 2, "state": "map", "signature": "setup::map::", "outcome_id": "SO-2-bbb"},
+        {"step_id": 3, "state": "reachability", "signature": "setup::semantic-graph::", "outcome_id": "SO-3-ccc"},
+        {"step_id": 4, "state": "hypothesize", "signature": "triage::hypothesize::", "outcome_id": "SO-4-ddd"},
+        {"step_id": 5, "state": "triage", "signature": "triage::candidate-set::C1", "outcome_id": "SO-5-eee"},
+        {"step_id": 6, "state": "proof", "signature": "proof::proof-plan::C1", "outcome_id": "SO-6-fff"},
+        {"step_id": 7, "state": "enrich", "signature": "variant::variant::C1", "outcome_id": "SO-7-ggg"},
+        {"step_id": 8, "state": "report", "signature": "reporting::report::", "outcome_id": "SO-8-hhh"}
+      ]
+    }
+  },
+  "candidates": [
+    {"id": "C1", "triage_verdict": "needs_proof", "proof": "passed", "root_cause": "missing authorization boundary on the object accessor"}
+  ]
+}

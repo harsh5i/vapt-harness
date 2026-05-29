@@ -1,0 +1,18 @@
+# Fixture for intent-ordering-check. Populates enough surface categories that
+# the default hypothesis order leads with realtime_authz_drift; declaring a
+# different threat model must reorder the matching hypothesis to the top.
+queries:
+  events_broadcasts:
+    top_files: {realtime/publisher.rb: 9, realtime/channel.rb: 6}
+  authz_checks:
+    top_files: {auth/guardian.rb: 8, realtime/publisher.rb: 4}
+  routes_handlers:
+    top_files: {web/routes.rb: 7, web/handlers.rb: 5}
+  parsers_decoders:
+    top_files: {parse/archive.rb: 4}
+  file_storage:
+    top_files: {store/upload.rb: 3}
+  network_clients:
+    top_files: {net/fetch.rb: 7, net/webhook.rb: 5}
+  process_execution:
+    top_files: {sys/runner.rb: 9, sys/shellout.rb: 6}
