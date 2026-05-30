@@ -1,0 +1,39 @@
+# Pre-commit hooks for the VAPT harness.
+#
+# Install once per clone:
+#   pip install pre-commit
+#   pre-commit install
+#
+# What this gate stops:
+#   1. Real engagement target data: a staged path under vapt/engagements/<id>/
+#      that is NOT the .gitkeep marker. .gitignore already excludes those
+#      paths, but a `git add -f` or a renamed subtree can bypass the ignore —
+#      this hook is the second line of defense.
+#   2. Generic secrets in any staged file via detect-secrets.
+#
+# A failing hook is fail-closed: the commit is rejected. Investigate, then
+# either remove the file or, for a legitimate fixture, add an explicit
+# `pragma: allowlist secret` annotation that detect-secrets recognises.
+
+repos:
+  - repo: local
+    hooks:
+      - id: block-engagement-data
+        name: block engagement target data from leaking into git
+        entry: scripts/check_engagement_paths.py
+        language: system
+        pass_filenames: true
+        types: [file]
+
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: ['--baseline', '.secrets.baseline']
+        exclude: |
+          (?x)^(
+            vapt/harness/fixtures/.*|
+            vapt/harness/tests/fixtures/.*|
+            vapt/harness/corpus/.*|
+            \.secrets\.baseline
+          )$

@@ -68,7 +68,7 @@ subprocess).
 | Authorization / ROE machine-enforcement | implemented | `gates/authorization.py`; `cmd_scan_zap/sqlmap/screenshot` gated via `_authorize_scan`; `scope-check` dry-run cmd; 13 unit tests | `./.venv-vapt/bin/python -m pytest vapt/harness/tests/test_authorization_scope.py` ; `python3 vapt/harness/harness.py scope-check <run_dir> <url> --scanner zap-full` | Target profile must declare `scope_hosts` (+ optional `out_of_scope_hosts`, `active_scan_allowed`). Fail-closed: undeclared scope = refuse. |
 | Package decomposition | partial | stub packages exist (`campaign/ gates/ ledger/ watch/ mutation/ tools/ source/`), each `__init__.py` only | `git ls-files vapt/harness/<pkg>` | Logic still in 12,885-line `harness.py`. T3.2 (tests-first). |
 | Unit tests | partial | first pytest suite landed: `test_authorization_scope.py` (13 tests) | `./.venv-vapt/bin/python -m pytest vapt/harness/tests/` | Only the authz gate is covered. T3.1 — extend to ledger/gates/transitions, ≥50 tests. |
-| Sensitive-data pre-commit | not_started | `.gitignore` excludes `engagements/*/` | — | No gitleaks/detect-secrets gate. T4.5. |
+| Sensitive-data pre-commit | implemented | `.pre-commit-config.yaml` + `scripts/check_engagement_paths.py` + `.secrets.baseline` (detect-secrets) | `pre-commit install && pre-commit run --all-files` | Opt-in install per clone. Engagement-path guard is fail-closed on any staged file under `vapt/engagements/<id>/`. |
 | Cross-platform support | partial | uses `fcntl` (Unix) for file locks | — | Crashes on Windows import; no lock abstraction. T4.4. |
 
 ## Honest capability framing (supersedes README until T4.2)

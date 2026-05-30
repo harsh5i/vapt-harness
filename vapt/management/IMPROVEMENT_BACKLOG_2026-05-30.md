@@ -207,6 +207,13 @@ batch at a time, snapshotting all `*-check` outputs before/after each batch:
   setup.
 - **T4.5** Sensitive-data pre-commit (gitleaks / detect-secrets + engagement-path
   regex); keep `vapt/engagements/*/` ignored; synthetic fixtures allowed.
+  **[DONE 2026-05-30]** Added `.pre-commit-config.yaml` (local
+  `block-engagement-data` hook + upstream `detect-secrets`),
+  `scripts/check_engagement_paths.py` (fail-closed guard refusing staged paths
+  under `vapt/engagements/<id>/` outside the explicit allowlist), and
+  `.secrets.baseline`. Captive fixture paths (`vapt/harness/fixtures/`,
+  `vapt/harness/tests/fixtures/`, `vapt/harness/corpus/`) are excluded so they
+  do not noise the detector.
 
 ## 3. Non-negotiables (carried from both reviews)
 
