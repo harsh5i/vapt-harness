@@ -161,13 +161,20 @@ batch at a time, snapshotting all `*-check` outputs before/after each batch:
 - Batch 7: `watch/state.py` (watch + queue state primitives — `watches_dir`,
   `watch_state_dir`, `queue_dir`, `watch_profile_path`, `load_watch_profiles`,
   `load_watch_state`, `save_watch_state`, `watch_source_key`,
-  `queue_entry_path`, `queue_write_entry`, `queue_entries`). `queue_write_entry`
-  remains the only sanctioned per-target queue append path; lock + schema
-  stamping preserved. Verification gate green: 65 tests, loop-integrity /
-  intent-ordering byte-identical to baseline, phase3 / phase4 / outcome-tune
-  rc=0.
-- harness.py: 13,001 → 12,487 → 12,339 → 12,058 → 11,913 → **11,839** lines.
-  Next batches up the order: campaign, source, then CLI dispatcher.
+  `queue_entry_path`, `queue_write_entry`, `queue_entries`). Verification gate
+  green.
+- Batch 8: `campaign/context.py` (campaign-root walk + module catalog —
+  `find_campaign_context`, `infer_campaign_dir_from_artifact`,
+  `campaign_module_catalog_path`, `load_campaign_modules`). The cmd_campaign_*
+  CLI handlers stay in harness.py (CLI dispatcher batch). Verification gate
+  green.
+- Batch 9: `source/targets.py` (engagement target profile lookup —
+  `_target_profile_paths`, `_load_target_profile`). Path-by-stem fast path
+  and id-field fallback preserved. Verification gate green: 65 tests,
+  loop-integrity / intent-ordering byte-identical to baseline, phase3 /
+  phase4 / outcome-tune rc=0.
+- harness.py: 13,001 → 12,487 → 12,339 → 12,058 → 11,913 → 11,839 → 11,799
+  → **11,788** lines. Next batch: CLI dispatcher (the final structural move).
 
 ### Tier 4 — Ergonomics, Honesty, Packaging
 
