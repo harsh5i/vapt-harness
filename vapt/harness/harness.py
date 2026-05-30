@@ -9858,63 +9858,19 @@ def cmd_phase3_check(args: argparse.Namespace) -> None:
         raise SystemExit(2)
 
 
-def watches_dir() -> Path:
-    return ROOT / "vapt" / "harness" / "watches"
-
-
-def watch_state_dir() -> Path:
-    return watches_dir() / "state"
-
-
-def queue_dir() -> Path:
-    return ROOT / "vapt" / "harness" / "queue"
-
-
-def watch_profile_path(target_id: str) -> Path:
-    return watches_dir() / f"{target_id}.yaml"
-
-
-def load_watch_profiles(target_id: str | None = None) -> list[dict[str, Any]]:
-    profiles = []
-    paths = [watch_profile_path(target_id)] if target_id else sorted(watches_dir().glob("*.yaml"))
-    for path in paths:
-        if not path.exists() or path.parent.name == "state":
-            continue
-        profile = load_yaml(path) or {}
-        profile.setdefault("target_id", path.stem)
-        profile.setdefault("sources", [])
-        profile.setdefault("poll_interval_minutes", 30)
-        profile.setdefault("trigger_patterns", [])
-        profile["_path"] = path
-        profiles.append(profile)
-    return profiles
-
-
-def load_watch_state(target_id: str) -> dict[str, Any]:
-    return read_json(watch_state_dir() / f"{target_id}.json", {"target_id": target_id, "sources": {}})
-
-
-def save_watch_state(target_id: str, state: dict[str, Any]) -> None:
-    state["target_id"] = target_id
-    state["updated_at"] = dt.datetime.now().isoformat(timespec="seconds")
-    write_json(watch_state_dir() / f"{target_id}.json", state)
-
-
-def watch_source_key(source: dict[str, Any]) -> str:
-    parts = [
-        str(source.get("kind", "")),
-        str(source.get("repo") or source.get("repo_path") or ""),
-        str(source.get("branch") or ""),
-        str(source.get("package") or ""),
-        str(source.get("ecosystem") or ""),
-        str(source.get("fixture") or ""),
-    ]
-    return "|".join(parts)
-
-
-def queue_entry_path(target_id: str, queue_id: str) -> Path:
-    raw = queue_id.split("/", 1)[1] if "/" in queue_id else queue_id
-    return queue_dir() / target_id / f"{raw}.yaml"
+# Watch + queue state primitives live in watch/state.py (core+atomic_io leaf
+# only). Imported here so harness.* references resolve unchanged.
+from watch.state import (  # noqa: E402
+    load_watch_profiles,
+    load_watch_state,
+    queue_dir,
+    queue_entry_path,
+    save_watch_state,
+    watch_profile_path,
+    watch_source_key,
+    watch_state_dir,
+    watches_dir,
+)
 
 
 def load_surface_terms(names: list[str]) -> list[str]:
@@ -9947,38 +9903,8 @@ def diff_pattern_hits(diff_text: str, trigger_patterns: list[str]) -> list[dict[
     return hits
 
 
-def queue_write_entry(target_id: str, entry: dict[str, Any]) -> Path:
-    queue_root = queue_dir() / target_id
-    queue_root.mkdir(parents=True, exist_ok=True)
-    stamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
-    ref = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(entry.get("ref") or entry.get("source_key") or "event"))[:48]
-    queue_id = f"{stamp}_{ref}_{uuid.uuid4().hex[:8]}"
-    entry["schema_version"] = 1
-    entry["queue_id"] = f"{target_id}/{queue_id}"
-    entry.setdefault("target_id", target_id)
-    entry.setdefault("status", "pending")
-    entry.setdefault("created_at", dt.datetime.now().isoformat(timespec="seconds"))
-    entry.setdefault("history", []).append(
-        {"at": dt.datetime.now().isoformat(timespec="seconds"), "event": "queued"}
-    )
-    path = queue_root / f"{queue_id}.yaml"
-    with file_lock(queue_root / ".queue"):
-        dump_yaml(entry, path)
-    return path
-
-
-def queue_entries(target_id: str | None = None, include_claimed: bool = False) -> list[dict[str, Any]]:
-    roots = [queue_dir() / target_id] if target_id else sorted(queue_dir().glob("*"))
-    rows = []
-    for root in roots:
-        if not root.exists() or not root.is_dir():
-            continue
-        for path in sorted(root.glob("*.yaml")):
-            entry = load_yaml(path) or {}
-            entry["_path"] = path
-            if include_claimed or entry.get("status", "pending") == "pending":
-                rows.append(entry)
-    return rows
+# queue_write_entry / queue_entries moved to watch/state.py.
+from watch.state import queue_entries, queue_write_entry  # noqa: E402
 
 
 def resolve_watch_repo_path(profile: dict[str, Any], source: dict[str, Any]) -> Path | None:
