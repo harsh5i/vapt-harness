@@ -37,8 +37,6 @@ from watch.state import load_watch_state, queue_entries, save_watch_state
 
 
 _h = sys.modules.get("harness") or sys.modules.get("__main__")
-if _h is None or not hasattr(_h, "load_run"):
-    import harness as _h  # noqa: E402
 
 
 def cmd_candidate_link_campaign(args: argparse.Namespace) -> None:

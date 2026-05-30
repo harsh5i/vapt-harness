@@ -26,8 +26,6 @@ from core import ROOT, rel, run_path, source_path
 
 
 _h = sys.modules.get("harness") or sys.modules.get("__main__")
-if _h is None or not hasattr(_h, "load_run"):
-    import harness as _h  # noqa: E402
 
 
 def load_surface_config() -> tuple[dict[str, list[str]], dict[str, str]]:

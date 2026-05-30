@@ -27,8 +27,6 @@ from tools.runtime import _ensure_runtime_or_local, _load_tool_module, container
 
 
 _h = sys.modules.get("harness") or sys.modules.get("__main__")
-if _h is None or not hasattr(_h, "load_run"):
-    import harness as _h  # noqa: E402
 
 
 def tool_gaps_path() -> Path:

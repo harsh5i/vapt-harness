@@ -29,8 +29,6 @@ from watch.state import load_watch_profiles, load_watch_state, queue_entries, qu
 
 
 _h = sys.modules.get("harness") or sys.modules.get("__main__")
-if _h is None or not hasattr(_h, "load_run"):
-    import harness as _h  # noqa: E402
 
 
 def diff_pattern_hits(diff_text: str, trigger_patterns: list[str]) -> list[dict[str, Any]]:

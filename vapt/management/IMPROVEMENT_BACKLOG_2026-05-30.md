@@ -216,16 +216,53 @@ batch at a time, snapshotting all `*-check` outputs before/after each batch:
   decomposition-time circular. Verification gate green: 77 tests,
   byte-identical loop / intent, phase3 / phase4 rc=0, source-probe
   still reports 5/5 on the seeded fixture.
-- harness.py: 13,001 → 12,487 → 12,339 → 12,058 → 11,913 → 11,839 → 11,799
-  → 11,788 → 10,823 → 10,404 → 9,164 → 8,601 → 7,896 → **7,365** lines.
-  Down from session-start by 5,636 lines / 43%. Module acceptance
-  (`no module > 1500 lines`) still not met; the remaining bulk is the
-  candidate-workflow cluster (cmd_candidate_*, cmd_dedup, cmd_gate,
-  cmd_prove, cmd_proof_plan, cmd_flow_trace, cmd_guard_drift,
+- Batch 16: `ledger/workflow.py` (34 funcs / 2,175 lines — the candidate
+  workflow: cmd_candidate_*, cmd_dedup, cmd_gate, cmd_prove,
+  cmd_proof_plan, cmd_hypothesize, cmd_flow_trace, cmd_guard_drift,
   cmd_patch_diff, cmd_patch_mine, cmd_variant, cmd_cluster_variants,
-  cmd_submit, _score_candidate, candidate_from_queue_entry,
-  recommend_next_action) plus phase checks, dashboards, reports, and
-  the orient/submit binding loop.
+  cmd_submit, cmd_orient, cmd_next_action, cmd_refine, cmd_score_tune,
+  cmd_ingest_*, plus `_score_candidate`, `candidate_from_queue_entry`,
+  `recommend_next_action`).
+- Batch 17: `checks.py` (9 funcs / 703 lines — every cmd_*_check handler:
+  outcome-tune, loop-integrity, intent-ordering, mutation-coverage,
+  phase2 / phase3 / phase4 / phase4-remote / phase4-soak).
+- Batch 18: `commands_auxiliary.py` (13 funcs / 527 lines — cmd_discovery_*,
+  cmd_osv_cache_*, cmd_queue / cmd_queue_claim, cmd_mutation_plan,
+  cmd_patch_first_plan, cmd_ledger_sqlite, cmd_corpus_suggest,
+  cmd_pick_target).
+- Batch 19: `commands_lifecycle.py` (23 funcs / 878 lines — cmd_init,
+  cmd_prepare, cmd_map, cmd_score, cmd_report, cmd_dashboard,
+  cmd_status, cmd_intent_*, cmd_budget, cmd_session_start, cmd_knowledge,
+  cmd_explain, cmd_commands, cmd_retro, cmd_test_skeleton, cmd_probes_*,
+  cmd_playbook, cmd_codeql_workflow, cmd_scaffold_poc, cmd_new_probe).
+- Batch 20: `mutation/__init__.py` (8 funcs / 278 lines — mutation catalog,
+  `_validate_mutation_block`, `_validate_mutation_artifact`, mutation-plan
+  / coverage-check render helpers).
+- Batch 21: `helpers.py` (89 funcs / 1,392 lines — the bulk-remainder bin:
+  run_cmd, load_run, save_stage, scoring helpers, adapter helpers, probe
+  loader, blackbox parsers, guard-drift helpers, flow helpers, phase
+  fixture helpers, intent helpers, loop-cursor helpers, etc.).
+
+  Two cross-cutting fixes landed with batch 21:
+  - `_h.ProbeContext` / `_h.PatchVariantHunter` rewritten to direct
+    `from probes.base import ProbeContext` / `from probes.patch_variant_hunter
+    import PatchVariantHunter` inside the function bodies that use them —
+    the extractor over-prefixed names that have local imports.
+  - The "load_run hasattr" guard in every extracted module's `_h`
+    lookup was the source of a self-recursive circular when `python
+    harness.py` is run as `__main__` (the partial module lacks load_run
+    until helpers.py is imported much later). Removed the fallback
+    `import harness as _h`; the dual sys.modules lookup is sufficient
+    because by the time an extracted handler is CALLED, harness is
+    fully loaded.
+  - `PATTERNS / GRAPH_QUERIES` override was moved to a single
+    `_apply_surface_config_override()` call at the very END of
+    harness.py, after every helper has been bound.
+
+- harness.py: 13,001 → 12,487 → 12,339 → 12,058 → 11,913 → 11,839 →
+  11,799 → 11,788 → 10,823 → 10,404 → 9,164 → 8,601 → 7,896 → 7,365 →
+  5,196 → 4,499 → 3,978 → 3,106 → 2,834 → **1,459** lines.
+  T3.2 acceptance **MET** — every module under 1,500 lines.
 
 ### Tier 4 — Ergonomics, Honesty, Packaging
 
