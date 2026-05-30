@@ -1,9 +1,13 @@
 # VAPT Harness
 
-Autonomous vulnerability research substrate. Operator-driven CLI plus a
-campaign engine that learns from outcomes, surfaces new targets from
-public advisory feeds, and runs both URL-based probes and source-reading
-probes against authorized targets.
+Evidence-gated vulnerability research harness for authorized assessment.
+Operator-driven CLI plus a campaign engine that tunes prioritization from
+recorded outcomes, surfaces new targets from public advisory feeds, and runs
+both URL-based probes and source-reading probes against authorized targets.
+
+**`STATUS.md` is the single source of truth** for what is actually implemented
+vs. partial vs. future. This README describes intent and usage; do not read a
+capability as working unless `STATUS.md` marks it `implemented`.
 
 Built across Phases 1-5. Phase 5 (2026-05-28) added the moves described
 in `management/MYTHOS_SUBSTRATE_PHASE5_ROADMAP_2026-05-28.md`:
@@ -105,13 +109,14 @@ python3 vapt/harness/harness.py discovery-list
 
 ## Capability claims
 
+Authoritative per-capability status lives in [`STATUS.md`](STATUS.md). Summary:
+
 | Path | State |
 |------|-------|
-| N-day discovery at scale | Architecturally ready. Gated on Docker for ZAP/sqlmap probes. |
-| Logic-flaw 0day | Architecturally open via source-reading probes. Not yet validated by a real campaign. |
-| Memory-corruption 0day | Out of scope. |
-| Cryptographic flaws | Out of scope. |
-| Protocol-state 0day | Out of scope. |
+| Evidence-gated candidate lifecycle | Implemented. |
+| N-day discovery (advisory-driven) | Partial. Scanners wired but not yet ROE-gated; Docker-gated for ZAP/sqlmap. |
+| Logic-flaw 0day via source-reading | Partial / future. AST is single-statement, synthetic-validated; not proven on a real campaign. |
+| Memory-corruption / crypto / protocol-state 0day | Out of scope (future). |
 
 ## Provenance
 
