@@ -91,110 +91,21 @@ DEFAULT_BUDGETS = {
 }
 
 
-@contextlib.contextmanager
-def candidate_ledger_lock(run_dir: Path):
-    lock_path = run_dir / "candidates.yaml.lock"
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    with lock_path.open("w", encoding="utf-8") as fh:
-        fcntl.flock(fh, fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(fh, fcntl.LOCK_UN)
-
-
-@contextlib.contextmanager
-def file_lock(path: Path):
-    lock_path = path.with_suffix(path.suffix + ".lock")
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    with lock_path.open("w", encoding="utf-8") as fh:
-        fcntl.flock(fh, fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(fh, fcntl.LOCK_UN)
-
-
-def _yaml():
-    try:
-        import yaml  # type: ignore
-
-        return "pyyaml", yaml
-    except Exception:
-        try:
-            from ruamel.yaml import YAML  # type: ignore
-
-            yaml = YAML()
-            yaml.default_flow_style = False
-            return "ruamel", yaml
-        except Exception as exc:
-            raise RuntimeError(
-                "YAML support is required. Install PyYAML or ruamel.yaml in the active "
-                "environment."
-            ) from exc
-
-
-def load_yaml(path: Path) -> Any:
-    kind, yaml = _yaml()
-    with path.open("r", encoding="utf-8") as fh:
-        if kind == "pyyaml":
-            return yaml.safe_load(fh)
-        return yaml.load(fh)
-
-
-def dump_yaml(data: Any, path: Path) -> None:
-    kind, yaml = _yaml()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
-    with tmp.open("w", encoding="utf-8") as fh:
-        if kind == "pyyaml":
-            yaml.safe_dump(data, fh, sort_keys=False)
-        else:
-            yaml.dump(data, fh)
-    os.replace(tmp, path)
-
-
-def write_text(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
-    tmp.write_text(text, encoding="utf-8")
-    os.replace(tmp, path)
-
-
-def read_json(path: Path, default: Any) -> Any:
-    if not path.exists():
-        return default
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def write_json(path: Path, data: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
-    tmp.write_text(json.dumps(data, indent=2, sort_keys=False) + "\n", encoding="utf-8")
-    os.replace(tmp, path)
-
-
-def read_jsonl(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
-        return []
-    rows = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        with contextlib.suppress(json.JSONDecodeError):
-            item = json.loads(line)
-            if isinstance(item, dict):
-                rows.append(item)
-    return rows
-
-
-def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
-    with tmp.open("w", encoding="utf-8") as fh:
-        for row in rows:
-            fh.write(json.dumps(row, sort_keys=False) + "\n")
-    os.replace(tmp, path)
+# Atomic file persistence + advisory file locks live in atomic_io (a stdlib-only
+# leaf module). Imported here so every existing harness.* reference resolves
+# unchanged.
+from atomic_io import (  # noqa: E402
+    candidate_ledger_lock,
+    dump_yaml,
+    file_lock,
+    load_yaml,
+    read_json,
+    read_jsonl,
+    write_json,
+    write_jsonl,
+    write_text,
+    _yaml,
+)
 
 
 def run_cmd(cmd: list[str], cwd: Path, timeout: int = 30, env: dict[str, str] | None = None) -> dict[str, Any]:
@@ -644,108 +555,18 @@ TARGET_PLAYBOOKS: dict[str, dict[str, Any]] = {
 }
 
 
-CVSS3_METRICS = {
-    "AV": {"N", "A", "L", "P"},
-    "AC": {"L", "H"},
-    "PR": {"N", "L", "H"},
-    "UI": {"N", "R"},
-    "S": {"U", "C"},
-    "C": {"N", "L", "H"},
-    "I": {"N", "L", "H"},
-    "A": {"N", "L", "H"},
-}
-
-
-def validate_cwe(value: str) -> bool:
-    return bool(re.fullmatch(r"CWE-\d{1,5}", str(value or "").strip(), flags=re.IGNORECASE))
-
-
-def parse_cvss3(vector: str) -> tuple[dict[str, str] | None, str]:
-    raw = str(vector or "").strip()
-    if not raw:
-        return None, "empty"
-    parts = raw.split("/")
-    if parts[0] not in {"CVSS:3.0", "CVSS:3.1"}:
-        return None, "must start with CVSS:3.0 or CVSS:3.1"
-    metrics: dict[str, str] = {}
-    for part in parts[1:]:
-        if ":" not in part:
-            return None, f"invalid metric: {part}"
-        key, value = part.split(":", 1)
-        if key not in CVSS3_METRICS or value not in CVSS3_METRICS[key]:
-            return None, f"invalid metric: {part}"
-        metrics[key] = value
-    missing = [key for key in CVSS3_METRICS if key not in metrics]
-    if missing:
-        return None, "missing metrics: " + ",".join(missing)
-    return metrics, ""
-
-
-def _cvss_round_up(value: float) -> float:
-    return int(value * 10 + 0.999999) / 10.0
-
-
-def cvss3_base_score(vector: str) -> tuple[float | None, str]:
-    metrics, err = parse_cvss3(vector)
-    if not metrics:
-        return None, err
-    av = {"N": 0.85, "A": 0.62, "L": 0.55, "P": 0.20}[metrics["AV"]]
-    ac = {"L": 0.77, "H": 0.44}[metrics["AC"]]
-    ui = {"N": 0.85, "R": 0.62}[metrics["UI"]]
-    pr_values = {
-        "U": {"N": 0.85, "L": 0.62, "H": 0.27},
-        "C": {"N": 0.85, "L": 0.68, "H": 0.50},
-    }
-    pr = pr_values[metrics["S"]][metrics["PR"]]
-    cia = {"N": 0.0, "L": 0.22, "H": 0.56}
-    iss = 1 - ((1 - cia[metrics["C"]]) * (1 - cia[metrics["I"]]) * (1 - cia[metrics["A"]]))
-    if metrics["S"] == "U":
-        impact = 6.42 * iss
-    else:
-        impact = 7.52 * (iss - 0.029) - 3.25 * ((iss - 0.02) ** 15)
-    exploitability = 8.22 * av * ac * pr * ui
-    if impact <= 0:
-        return 0.0, ""
-    if metrics["S"] == "U":
-        return _cvss_round_up(min(impact + exploitability, 10)), ""
-    return _cvss_round_up(min(1.08 * (impact + exploitability), 10)), ""
-
-
-def substantive(value: Any) -> bool:
-    return value not in (None, "", "unchecked", []) and str(value).strip().lower() not in {
-        "x",
-        "todo",
-        "tbd",
-        "n/a",
-    }
-
-
-def substantive_text(value: Any, min_chars: int = 18) -> bool:
-    if not substantive(value):
-        return False
-    text = re.sub(r"\s+", " ", str(value)).strip()
-    if len(text) < min_chars:
-        return False
-    weak_values = {
-        "yes",
-        "true",
-        "affected",
-        "works",
-        "passed",
-        "unknown",
-        "not checked",
-        "manual",
-    }
-    return text.lower() not in weak_values
-
-
-def exact_affected_version(value: Any) -> bool:
-    if not substantive(value):
-        return False
-    text = str(value).strip()
-    if text.lower() in {"yes", "true", "affected", "latest"}:
-        return False
-    return bool(re.search(r"(v?\d+\.\d+|commit|sha|tag|release|main@|[a-f0-9]{7,40})", text, flags=re.IGNORECASE))
+# Field validators (CWE/CVSS/substantive/affected-version) live in the
+# stdlib-only validators leaf module. Imported so harness.* references resolve.
+from validators import (  # noqa: E402
+    CVSS3_METRICS,
+    cvss3_base_score,
+    exact_affected_version,
+    parse_cvss3,
+    substantive,
+    substantive_text,
+    validate_cwe,
+    _cvss_round_up,
+)
 
 
 def artifact_exists(rel_path: Any) -> bool:
@@ -6325,24 +6146,7 @@ def outcome_tuning_path() -> Path:
     return ROOT / "vapt" / "harness" / "corpus" / "outcome_tuning.yaml"
 
 
-def submission_positive(status: str) -> bool:
-    return str(status or "").lower() in {"triaged", "resolved", "paid", "accepted", "valid", "informative"}
-
-
-def submission_terminal(status: str) -> bool:
-    return str(status or "").lower() in {
-        "triaged",
-        "duplicate",
-        "n_a",
-        "resolved",
-        "paid",
-        "accepted",
-        "valid",
-        "informative",
-        "rejected",
-        "not_applicable",
-        "out_of_scope",
-    }
+from validators import submission_positive, submission_terminal  # noqa: E402
 
 
 def candidate_outcome_metadata(target: dict[str, Any], cand: dict[str, Any]) -> dict[str, Any]:
