@@ -197,11 +197,35 @@ batch at a time, snapshotting all `*-check` outputs before/after each batch:
   literals). Verification gate green: 77 tests, loop-integrity /
   intent-ordering byte-identical, phase3 / phase4 / outcome-tune /
   campaign-flow-check rc=0.
+- Batch 13: `watch/polling.py` (20 funcs / 569 body lines — per-source poll
+  handlers `poll_local_git_source`, `poll_local_release_source`,
+  `poll_remote_source`, `poll_fixture_advisories`, `poll_watch_source`,
+  the OSV/GHSA advisory match + patch-enrichment helpers, the four
+  cmd_watch_* handlers, plus `diff_pattern_hits` and
+  `resolve_watch_repo_path`). Verification gate green.
+- Batch 14: `tools/commands.py` (25 funcs / 711 body lines — every
+  cmd_scan_* + cmd_tool_* + cmd_sandbox_exec + cmd_scope_check handler,
+  the `_authorize_scan` wrapper, the `tool_gaps_path` + `log_tool_gap`
+  helpers, and `normalize_scanner_findings`). Verification gate green.
+- Batch 15: `source/commands.py` (15 funcs / 546 body lines — cmd_source_*
+  + cmd_semantic_graph + cmd_taint_trace + cmd_surfaces_test handlers,
+  the AST-walker helpers `_function_defs` / `_source_files`, plus
+  `load_surface_config` / `load_surface_terms`). One in-harness module
+  expression (`PATTERNS, GRAPH_QUERIES = load_surface_config()`) was
+  wrapped in a `_compute_surface_patterns` lazy-import shim to break the
+  decomposition-time circular. Verification gate green: 77 tests,
+  byte-identical loop / intent, phase3 / phase4 rc=0, source-probe
+  still reports 5/5 on the seeded fixture.
 - harness.py: 13,001 → 12,487 → 12,339 → 12,058 → 11,913 → 11,839 → 11,799
-  → 11,788 → 10,823 → 10,404 → **9,164** lines. Module acceptance
-  (`no module > 1500 lines`) still not met; remaining cmd_* clusters
-  to extract: watch polling + advisory, source AST, scanner commands,
-  candidate workflow.
+  → 11,788 → 10,823 → 10,404 → 9,164 → 8,601 → 7,896 → **7,365** lines.
+  Down from session-start by 5,636 lines / 43%. Module acceptance
+  (`no module > 1500 lines`) still not met; the remaining bulk is the
+  candidate-workflow cluster (cmd_candidate_*, cmd_dedup, cmd_gate,
+  cmd_prove, cmd_proof_plan, cmd_flow_trace, cmd_guard_drift,
+  cmd_patch_diff, cmd_patch_mine, cmd_variant, cmd_cluster_variants,
+  cmd_submit, _score_candidate, candidate_from_queue_entry,
+  recommend_next_action) plus phase checks, dashboards, reports, and
+  the orient/submit binding loop.
 
 ### Tier 4 — Ergonomics, Honesty, Packaging
 

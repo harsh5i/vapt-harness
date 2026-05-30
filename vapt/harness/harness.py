@@ -609,32 +609,7 @@ def duplicate_source_coverage(cand: dict[str, Any]) -> dict[str, bool]:
 # dedup_checked/workflow_blockers imported from gates.promotion (above).
 
 
-def load_surface_config() -> tuple[dict[str, list[str]], dict[str, str]]:
-    path = ROOT / "vapt" / "harness" / "config" / "surfaces.yaml"
-    if not path.exists():
-        return PATTERNS, GRAPH_QUERIES
-    config = load_yaml(path) or {}
-    surfaces = config.get("surfaces", {})
-    fixed = {
-        category: [str(item) for item in values.get("fixed", [])]
-        for category, values in surfaces.items()
-    }
-    regexes = {
-        category: str(values.get("regex", ""))
-        for category, values in surfaces.items()
-        if values.get("regex")
-    }
-    graph: dict[str, str] = {}
-    for alias, value in (config.get("aliases") or {}).items():
-        if str(value) in regexes:
-            graph[str(alias)] = regexes[str(value)]
-        else:
-            graph[str(alias)] = str(value)
-    for category, regex in regexes.items():
-        graph.setdefault(category, regex)
-    return fixed, graph
-
-
+# load_surface_config moved to source.commands.
 def cmd_map(args: argparse.Namespace) -> None:
     run_dir = run_path(args.run_dir)
     state, target = load_run(run_dir)
@@ -671,63 +646,7 @@ def cmd_map(args: argparse.Namespace) -> None:
     print(rel(run_dir / "attack_surface.md"))
 
 
-def cmd_surfaces_test(args: argparse.Namespace) -> None:
-    corpus = run_path(args.corpus)
-    expectations_path = run_path(args.expectations)
-    expectations = load_yaml(expectations_path) or {"categories": {}}
-    results: dict[str, Any] = {
-        "generated_at": dt.datetime.now().isoformat(timespec="seconds"),
-        "corpus": rel(corpus),
-        "expectations": rel(expectations_path),
-        "categories": {},
-    }
-    failures = []
-    for category, spec in (expectations.get("categories") or {}).items():
-        patterns = PATTERNS.get(category, [])
-        hits = []
-        for pattern in patterns:
-            result = run_cmd(["rg", "-n", "-S", "-F", pattern], corpus, timeout=args.timeout)
-            if result["returncode"] in (0, 1):
-                hits.extend(result["stdout"].splitlines())
-        min_hits = int(spec.get("min_hits", 0))
-        unique_hits = sorted(set(hits))
-        passed = len(unique_hits) >= min_hits
-        if not passed:
-            failures.append(f"{category}: expected >= {min_hits}, got {len(unique_hits)}")
-        results["categories"][category] = {
-            "min_hits": min_hits,
-            "hit_count": len(unique_hits),
-            "passed": passed,
-            "sample_hits": unique_hits[: args.max_hits],
-        }
-
-    out_dir = ROOT / "vapt" / "harness" / "tests" / "results"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    stamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
-    out = out_dir / f"surface_test_{stamp}"
-    dump_yaml(results, out.with_suffix(".yaml"))
-    md = ["# Surface Pattern Regression", "", f"- Corpus: `{rel(corpus)}`", ""]
-    for category, item in results["categories"].items():
-        md.extend(
-            [
-                f"## `{category}`",
-                "",
-                f"- Expected min hits: `{item['min_hits']}`",
-                f"- Actual hits: `{item['hit_count']}`",
-                f"- Passed: `{item['passed']}`",
-                "",
-            ]
-        )
-        for hit in item["sample_hits"]:
-            md.append(f"- `{hit}`")
-        md.append("")
-    write_text(out.with_suffix(".md"), "\n".join(md))
-    print(rel(out.with_suffix(".md")))
-    if failures:
-        print("failures=" + "; ".join(failures))
-        raise SystemExit(2)
-
-
+# cmd_surfaces_test moved to source.commands.
 # Candidate ledger primitives (DEFAULT_CANDIDATE shape, normalization, the
 # locked YAML store, and id allocation) live in ledger/candidates.py. Imported
 # here so harness.* references resolve unchanged.
@@ -2045,81 +1964,19 @@ DEFAULT_SOURCE_GRAPH_EXCLUDES = [
     "!**/node_modules/**",
 ]
 
-PATTERNS, GRAPH_QUERIES = load_surface_config()
+# PATTERNS / GRAPH_QUERIES are computed from source.commands.load_surface_config
+# but that module is imported far below to avoid a circular at decomposition
+# time. Materialize them lazily here so the load completes after source.commands
+# has been bound.
+def _compute_surface_patterns() -> tuple[dict, dict]:
+    from source.commands import load_surface_config
+    return load_surface_config()
 
 
-def cmd_source_graph(args: argparse.Namespace) -> None:
-    run_dir = run_path(args.run_dir)
-    state, target = load_run(run_dir)
-    src = source_path(target)
-    out_dir = run_dir / "source_graph"
-    out_dir.mkdir(exist_ok=True)
-
-    graph: dict[str, Any] = {
-        "target_id": target["id"],
-        "generated_at": dt.datetime.now().isoformat(timespec="seconds"),
-        "source_path": rel(src),
-        "queries": {},
-    }
-    for category, pattern in GRAPH_QUERIES.items():
-        cmd = ["rg", "-n", "-S", pattern]
-        for glob in args.glob or []:
-            cmd.extend(["--glob", glob])
-        if not args.include_tests:
-            for glob in DEFAULT_SOURCE_GRAPH_EXCLUDES:
-                cmd.extend(["--glob", glob])
-        result = run_cmd(cmd, src, timeout=args.timeout)
-        hits = result["stdout"].splitlines()[: args.max_hits] if result["returncode"] in (0, 1) else []
-        by_file: dict[str, int] = {}
-        for hit in hits:
-            file_name = hit.split(":", 1)[0]
-            by_file[file_name] = by_file.get(file_name, 0) + 1
-        graph["queries"][category] = {
-            "pattern": pattern,
-            "returncode": result["returncode"],
-            "timeout": result["timeout"],
-            "hits_capped": len(hits),
-            "top_files": dict(sorted(by_file.items(), key=lambda kv: (-kv[1], kv[0]))[:20]),
-            "hits": hits,
-            "stderr": result["stderr"].strip(),
-        }
-
-    dump_yaml(graph, out_dir / "source_graph.yaml")
-    md = [
-        f"# Source Graph: {target['id']}",
-        "",
-        f"- Source: `{rel(src)}`",
-        f"- Generated: `{graph['generated_at']}`",
-        "",
-    ]
-    for category, item in graph["queries"].items():
-        md.extend(
-            [
-                f"## {category}",
-                "",
-                f"- Pattern: `{item['pattern']}`",
-                f"- Hits captured: `{item['hits_capped']}`",
-                "",
-                "### Top Files",
-                "",
-            ]
-        )
-        if item["top_files"]:
-            for file_name, count in item["top_files"].items():
-                md.append(f"- `{file_name}`: {count}")
-        else:
-            md.append("- No hits")
-        md.extend(["", "### Sample Hits", ""])
-        for hit in item["hits"][: args.sample_hits]:
-            md.append(f"- `{hit}`")
-        if not item["hits"]:
-            md.append("- No hits")
-        md.append("")
-    write_text(out_dir / "source_graph.md", "\n".join(md))
-    save_stage(run_dir, state, "source_graph")
-    print(rel(out_dir / "source_graph.md"))
+PATTERNS, GRAPH_QUERIES = _compute_surface_patterns()
 
 
+# cmd_source_graph moved to source.commands.
 def _load_latest_variant_yaml(run_dir: Path, candidate_id: str) -> dict[str, Any]:
     variants = sorted((run_dir / "variant_analysis").glob(f"{candidate_id}_*.yaml"))
     if not variants:
@@ -2444,13 +2301,7 @@ def cmd_score(args: argparse.Namespace) -> None:
         raise SystemExit(2)
 
 
-def _load_source_graph(run_dir: Path) -> dict[str, Any]:
-    path = run_dir / "source_graph" / "source_graph.yaml"
-    if not path.exists():
-        raise SystemExit("source graph not found; run `harness.py source-graph <run_dir>` first")
-    return load_yaml(path) or {}
-
-
+# _load_source_graph moved to source.commands.
 def _top_files(graph: dict[str, Any], category: str, limit: int) -> list[str]:
     query = graph.get("queries", {}).get(category, {})
     return list((query.get("top_files") or {}).keys())[:limit]
@@ -2797,105 +2648,9 @@ CALL_STOPWORDS = {
 }
 
 
-def _is_default_excluded(path: str) -> bool:
-    parts = Path(path).parts
-    if "vendor" in parts or "node_modules" in parts or "testdata" in parts or "mocks" in parts:
-        return True
-    if parts and parts[0] == "tools":
-        return True
-    if "spec" in parts:
-        return True
-    name = Path(path).name
-    if name.endswith("_spec.rb") or name.endswith("_test.rb"):
-        return True
-    return name.endswith("_test.go") or "test" in name.lower()
-
-
-def _source_files(src: Path, include_tests: bool, paths: list[str] | None, max_files: int) -> list[Path]:
-    if paths:
-        raw_files: list[str] = []
-        for raw in paths:
-            path = src / raw
-            if path.is_file():
-                raw_files.append(raw)
-            elif path.is_dir():
-                result = run_cmd(["rg", "--files", raw], src, timeout=60)
-                if result["returncode"] == 0:
-                    raw_files.extend(result["stdout"].splitlines())
-    else:
-        result = run_cmd(["rg", "--files"], src, timeout=60)
-        raw_files = result["stdout"].splitlines() if result["returncode"] == 0 else []
-
-    files = []
-    for raw in raw_files:
-        if len(files) >= max_files:
-            break
-        if not include_tests and _is_default_excluded(raw):
-            continue
-        path = src / raw
-        if path.suffix.lower() in SEMANTIC_SUFFIXES and path.is_file():
-            files.append(path)
-    return files
-
-
-def _function_defs(rel_name: str, text: str) -> list[dict[str, Any]]:
-    defs: list[dict[str, Any]] = []
-    suffix = Path(rel_name).suffix.lower()
-    patterns: list[tuple[str, str]] = []
-    if suffix == ".go":
-        patterns = [
-            ("function", r"^\s*func\s+(?:\([^)]*\)\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*\("),
-        ]
-    elif suffix == ".java":
-        patterns = [
-            ("class", r"^\s*(?:public|private|protected|abstract|final|static|\s)*\s*(?:class|interface|enum)\s+([A-Za-z_][A-Za-z0-9_]*)\b"),
-            (
-                "function",
-                r"^\s*(?:public|private|protected|static|final|synchronized|abstract|native|strictfp|\s)+"
-                r"(?:<[A-Za-z0-9_, ? extends super]+>\s*)?[A-Za-z_][A-Za-z0-9_<>\[\], ?]*\s+"
-                r"([A-Za-z_][A-Za-z0-9_]*)\s*\(",
-            ),
-        ]
-    elif suffix == ".py":
-        patterns = [
-            ("function", r"^\s*(?:async\s+)?def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\("),
-            ("class", r"^\s*class\s+([A-Za-z_][A-Za-z0-9_]*)\b"),
-        ]
-    elif suffix in {".js", ".jsx", ".ts", ".tsx"}:
-        patterns = [
-            ("function", r"^\s*(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_][A-Za-z0-9_]*)\s*\("),
-            ("function", r"^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:async\s*)?\("),
-            ("class", r"^\s*(?:export\s+)?class\s+([A-Za-z_][A-Za-z0-9_]*)\b"),
-        ]
-    elif suffix == ".rb":
-        patterns = [
-            ("function", r"^\s*def\s+(?:self\.)?([A-Za-z_][A-Za-z0-9_]*[!?=]?)"),
-            ("class", r"^\s*class\s+([A-Za-z_][A-Za-z0-9_:]*)"),
-            ("module", r"^\s*module\s+([A-Za-z_][A-Za-z0-9_:]*)"),
-        ]
-
-    lines = text.splitlines()
-    for index, line in enumerate(lines, start=1):
-        for kind, pattern in patterns:
-            match = re.search(pattern, line)
-            if match:
-                defs.append(
-                    {
-                        "file": rel_name,
-                        "line": index,
-                        "end_line": len(lines),
-                        "name": match.group(1),
-                        "kind": kind,
-                        "signature": line.strip()[:220],
-                    }
-                )
-                break
-    for index, item in enumerate(defs):
-        if index + 1 < len(defs):
-            item["end_line"] = max(item["line"], defs[index + 1]["line"] - 1)
-    return defs
-
-
+# _is_default_excluded moved to source.commands.
+# _source_files moved to source.commands.
+# _function_defs moved to source.commands.
 def _calls_in_body(body: str) -> list[str]:
     names = re.findall(r"(?:\.|\b)([A-Za-z_][A-Za-z0-9_]*)\s*\(", body)
     seen: set[str] = set()
@@ -2923,110 +2678,8 @@ def _semantic_categories(body: str) -> list[str]:
     return list(by_pattern.values())
 
 
-def cmd_semantic_graph(args: argparse.Namespace) -> None:
-    run_dir = run_path(args.run_dir)
-    state, target = load_run(run_dir)
-    src = source_path(target)
-    out_dir = run_dir / "semantic_graph"
-    out_dir.mkdir(exist_ok=True)
-
-    functions: list[dict[str, Any]] = []
-    files = _source_files(src, args.include_tests, args.path, args.max_files)
-    for path in files:
-        rel_name = rel(path).removeprefix(rel(src) + "/")
-        try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        lines = text.splitlines()
-        for fn in _function_defs(rel_name, text):
-            body = "\n".join(lines[fn["line"] - 1 : fn["end_line"]])
-            fn["categories"] = _semantic_categories(body)
-            fn["calls"] = _calls_in_body(body)
-            functions.append(fn)
-            if len(functions) >= args.max_functions:
-                break
-        if len(functions) >= args.max_functions:
-            break
-
-    name_index: dict[str, list[int]] = {}
-    for index, fn in enumerate(functions):
-        name_index.setdefault(fn["name"], []).append(index)
-
-    edges = []
-    for index, fn in enumerate(functions):
-        for call in fn.get("calls", []):
-            for target_index in name_index.get(call, [])[: args.max_targets_per_call]:
-                if target_index != index:
-                    edges.append(
-                        {
-                            "from": index,
-                            "to": target_index,
-                            "call": call,
-                            "from_name": fn["name"],
-                            "to_name": functions[target_index]["name"],
-                        }
-                    )
-                    break
-
-    by_category: dict[str, list[int]] = {}
-    for index, fn in enumerate(functions):
-        for category in fn.get("categories", []):
-            by_category.setdefault(category, []).append(index)
-
-    graph = {
-        "target_id": target["id"],
-        "run_id": state.get("run_id"),
-        "generated_at": dt.datetime.now().isoformat(timespec="seconds"),
-        "source_path": rel(src),
-        "file_count_scanned": len(files),
-        "function_count": len(functions),
-        "edge_count": len(edges),
-        "functions": functions,
-        "edges": edges[: args.max_edges],
-        "category_index": {key: value[:200] for key, value in by_category.items()},
-    }
-    dump_yaml(graph, out_dir / "semantic_graph.yaml")
-
-    md = [
-        f"# Semantic Graph: {target['id']}",
-        "",
-        f"- Source: `{rel(src)}`",
-        f"- Files scanned: `{len(files)}`",
-        f"- Functions/classes: `{len(functions)}`",
-        f"- Edges captured: `{min(len(edges), args.max_edges)}`",
-        "",
-        "## Categories",
-        "",
-    ]
-    for category, indexes in sorted(by_category.items(), key=lambda item: (-len(item[1]), item[0])):
-        md.append(f"- `{category}`: {len(indexes)}")
-    md.extend(["", "## High-Signal Functions", ""])
-    high_signal = [fn for fn in functions if fn.get("categories")]
-    for fn in high_signal[: args.sample_functions]:
-        md.extend(
-            [
-                f"### `{fn['name']}`",
-                "",
-                f"- File: `{fn['file']}:{fn['line']}`",
-                f"- Categories: `{', '.join(fn.get('categories', []))}`",
-                f"- Calls: `{', '.join(fn.get('calls', [])[:20])}`",
-                f"- Signature: `{fn['signature']}`",
-                "",
-            ]
-        )
-    write_text(out_dir / "semantic_graph.md", "\n".join(md))
-    save_stage(run_dir, state, "semantic_graph")
-    print(rel(out_dir / "semantic_graph.md"))
-
-
-def _load_semantic_graph(run_dir: Path) -> dict[str, Any]:
-    path = run_dir / "semantic_graph" / "semantic_graph.yaml"
-    if not path.exists():
-        raise SystemExit("semantic graph not found; run `harness.py semantic-graph <run_dir>` first")
-    return load_yaml(path) or {}
-
-
+# cmd_semantic_graph moved to source.commands.
+# _load_semantic_graph moved to source.commands.
 def _terms_from_candidate(cand: dict[str, Any], supplied: list[str] | None) -> list[str]:
     terms = list(supplied or [])
     for key in ("entrypoint", "sink", "root_cause", "trust_boundary", "title", "impact"):
@@ -3556,142 +3209,8 @@ def _flow_guard(lines: list[str], fn_start: int, sink_offset: int, tainted: list
     return None
 
 
-def _taint_function(fn: dict[str, Any], lines: list[str], sink_regex: str, source_regex: str) -> list[dict[str, Any]]:
-    tainted: set[str] = set()
-    shadowed: set[str] = set()
-    flows = []
-    fn_start = int(fn.get("line", 1))
-    signature = str(fn.get("signature", ""))
-    for name in re.findall(r"\b([A-Za-z_][A-Za-z0-9_]*)\b", signature):
-        if re.search(source_regex, name, flags=re.IGNORECASE):
-            tainted.add(name)
-    for offset, line in enumerate(lines, start=fn_start):
-        is_declaration = offset == fn_start
-        stripped = line.strip()
-        if stripped.startswith(("//", "#", "/*", "*")):
-            continue
-        assign = TAINT_ASSIGN_RE.search(line)
-        lhs = assign.group(1) if assign else None
-        rhs = line[assign.end():] if assign else line
-        # Seed taint from bare source tokens used as data, but never from the
-        # assignment target itself (a local named `params` is not request data)
-        # and never from a name that was explicitly shadowed by a local rebinding.
-        if re.search(source_regex, line, flags=re.IGNORECASE):
-            for name in re.findall(r"\b([A-Za-z_][A-Za-z0-9_]*)\b", line):
-                if name == lhs or name in shadowed:
-                    continue
-                if re.search(source_regex, name, flags=re.IGNORECASE):
-                    tainted.add(name)
-        if assign:
-            rhs_has_source = bool(re.search(source_regex, rhs, flags=re.IGNORECASE))
-            rhs_has_taint = any(re.search(rf"\b{re.escape(name)}\b", rhs) for name in tainted)
-            if rhs_has_source or rhs_has_taint:
-                tainted.add(lhs)
-                shadowed.discard(lhs)
-            elif lhs.lower() in WEAK_SOURCE_NAMES:
-                # Local variable named like a source but built from non-tainted
-                # data — shadow it so later uses don't re-seed taint.
-                tainted.discard(lhs)
-                shadowed.add(lhs)
-        if not is_declaration and re.search(sink_regex, line, flags=re.IGNORECASE):
-            matched = sorted(name for name in tainted if re.search(rf"\b{re.escape(name)}\b", line))
-            source_line = bool(re.search(STRONG_SOURCE_RE, line))
-            if matched or source_line:
-                guard = _flow_guard(lines, fn_start, offset, matched, line)
-                flows.append(
-                    {
-                        "line": offset,
-                        "sink_line": line.strip()[:260],
-                        "tainted_variables": matched,
-                        "source_on_same_line": source_line,
-                        "guard": guard,
-                        "guarded": guard is not None,
-                    }
-                )
-    return flows
-
-
-def cmd_taint_trace(args: argparse.Namespace) -> None:
-    run_dir = run_path(args.run_dir)
-    _, target = load_run(run_dir)
-    src = source_path(target)
-    graph = _load_semantic_graph(run_dir)
-    functions = graph.get("functions", [])
-    sink_categories = args.sink_category or [
-        "process_execution",
-        "network_clients",
-        "file_storage",
-        "deserialization",
-        "template_injection",
-    ]
-    sink_regex = "|".join(f"(?:{GRAPH_QUERIES[cat]})" for cat in sink_categories if cat in GRAPH_QUERIES)
-    if not sink_regex:
-        raise SystemExit("no valid sink categories selected")
-    source_regex = args.source_regex or TAINT_SOURCE_RE
-    traces = []
-    for fn in functions:
-        categories = set(fn.get("categories", []))
-        if not categories.intersection(sink_categories):
-            continue
-        flows = _taint_function(fn, _function_body(src, fn), sink_regex, source_regex)
-        if getattr(args, "unguarded_only", False):
-            flows = [flow for flow in flows if not flow.get("guarded")]
-        if flows:
-            flows.sort(key=lambda flow: (bool(flow.get("guarded")), int(flow["line"])))
-            traces.append(
-                {
-                    "file": fn.get("file"),
-                    "function": fn.get("name"),
-                    "function_line": fn.get("line"),
-                    "categories": sorted(categories),
-                    "flows": flows,
-                    "unguarded_flows": sum(1 for flow in flows if not flow.get("guarded")),
-                }
-            )
-    # Surface traces with at least one unguarded flow first; the guard heuristic
-    # only downranks, so fully-guarded traces stay in the report for review.
-    traces.sort(key=lambda item: (item["unguarded_flows"] == 0, str(item["file"]), int(item["function_line"] or 0)))
-    traces = traces[: args.max_traces]
-
-    out_dir = run_dir / "taint_traces"
-    out_dir.mkdir(exist_ok=True)
-    stamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
-    artifact = {
-        "generated_at": dt.datetime.now().isoformat(timespec="seconds"),
-        "source_path": rel(src),
-        "source_regex": source_regex,
-        "sink_categories": sink_categories,
-        "trace_count": len(traces),
-        "traces": traces,
-    }
-    dump_yaml(artifact, out_dir / f"taint_trace_{stamp}.yaml")
-    md = [
-        "# Taint Trace",
-        "",
-        f"- Source regex: `{source_regex}`",
-        f"- Sink categories: `{', '.join(sink_categories)}`",
-        f"- Traces: `{len(traces)}`",
-        "",
-    ]
-    for item in traces:
-        md.extend(
-            [
-                f"## `{item['file']}:{item['function_line']} {item['function']}`",
-                "",
-                f"- Categories: `{', '.join(item['categories'])}`",
-                "",
-            ]
-        )
-        for flow in item["flows"]:
-            guard = f" guard=`{flow['guard']}`" if flow.get("guarded") else ""
-            md.append(
-                f"- Line `{flow['line']}` vars=`{', '.join(flow['tainted_variables'])}` same_line=`{flow['source_on_same_line']}`{guard}: `{flow['sink_line']}`"
-            )
-        md.append("")
-    write_text(out_dir / f"taint_trace_{stamp}.md", "\n".join(md))
-    print(rel(out_dir / f"taint_trace_{stamp}.md"))
-
-
+# _taint_function moved to source.commands.
+# cmd_taint_trace moved to source.commands.
 DEFAULT_GUARD_DRIFT_REGEX = (
     r"(isFileAccessDenied|file_deny|deny_glob|SafeLoader|safe_load|"
     r"validate[A-Za-z0-9_]*(?:Url|URL|Uri|URI|Path|File|Archive|Redirect|Permission|Access)|"
@@ -5108,62 +4627,9 @@ def cmd_osv_cache_clear(args: argparse.Namespace) -> None:
         print(f"cleared {rel(path)}")
 
 
-def cmd_source_acquire(args: argparse.Namespace) -> None:
-    sys.path.insert(0, str(ROOT / "vapt" / "harness"))
-    from source.acquire import acquire
-    descriptor = acquire(root=ROOT, repo_url=args.repo_url, commit=args.commit)
-    if args.json:
-        print(json.dumps(descriptor, indent=2, sort_keys=False))
-    else:
-        print(f"{descriptor['mode']}: {descriptor['path']} @ {descriptor['commit']}")
-
-
-def cmd_source_index(args: argparse.Namespace) -> None:
-    sys.path.insert(0, str(ROOT / "vapt" / "harness"))
-    from source.index import index_tree
-    repo_path = Path(args.repo_path)
-    if not repo_path.exists():
-        raise SystemExit(f"missing: {repo_path}")
-    idx = index_tree(repo_path, max_files=args.max_files)
-    if args.json:
-        print(json.dumps(idx, indent=2, sort_keys=False))
-    else:
-        print(f"indexed={idx['total_indexed']} languages={list(idx['languages'].keys())}")
-
-
-def cmd_source_probe(args: argparse.Namespace) -> None:
-    """Run patch_variant_hunter (or another source-reading probe) against a local repo path."""
-    sys.path.insert(0, str(ROOT / "vapt" / "harness"))
-    from probes.patch_variant_hunter import PatchVariantHunter
-    from probes.base import ProbeContext
-    knobs: dict[str, Any] = {}
-    if args.max_files:
-        knobs["max_files"] = args.max_files
-    if args.bug_classes:
-        knobs["bug_classes"] = args.bug_classes
-    target: dict[str, Any] = {}
-    if args.local_path:
-        target["local_path"] = args.local_path
-    if args.repo_url:
-        target["repo_url"] = args.repo_url
-    if args.commit:
-        target["commit"] = args.commit
-    if not target:
-        raise SystemExit("provide --local-path or --repo-url")
-    ctx = ProbeContext(run_dir=Path(args.run_dir or "/tmp"), target=target, candidate={"id": "SOURCE-PROBE"}, knobs=knobs)
-    result = PatchVariantHunter().run(ctx)
-    if args.json:
-        print(json.dumps(dict(result), indent=2, sort_keys=False))
-    else:
-        print(
-            f"finding_count={result.get('finding_count')} "
-            f"files={result.get('file_count')} "
-            f"(python={result.get('python_file_count')} ruby={result.get('ruby_file_count')})"
-        )
-        for f in (result.get("findings") or [])[:args.head]:
-            print(f"  {f['file']}:{f['line']}  [{f['bug_class']}]  {f['hypothesis']}")
-
-
+# cmd_source_acquire moved to source.commands.
+# cmd_source_index moved to source.commands.
+# cmd_source_probe moved to source.commands.
 def _load_watch_module(name: str) -> Any:
     sys.path.insert(0, str(ROOT / "vapt" / "harness"))
     import importlib
@@ -6584,25 +6050,8 @@ PROBE_REGISTRY = {
 }
 
 
-def tool_gaps_path() -> Path:
-    return ROOT / "vapt" / "harness" / "corpus" / "tool_gaps.jsonl"
-
-
-def log_tool_gap(run_dir: Path, candidate_id: str, missing_class: str, context: str) -> None:
-    path = tool_gaps_path()
-    entry = {
-        "at": dt.datetime.now().isoformat(timespec="seconds"),
-        "run_dir": rel(run_dir),
-        "candidate_id": candidate_id,
-        "missing_class": missing_class,
-        "context": context,
-    }
-    with file_lock(path):
-        rows = read_jsonl(path)
-        rows.append(entry)
-        write_jsonl(path, rows)
-
-
+# tool_gaps_path moved to tools.commands.
+# log_tool_gap moved to tools.commands.
 def select_probe(cand: dict[str, Any]) -> str | None:
     text = _candidate_signal(cand).lower()
     best = None
@@ -7113,118 +6562,9 @@ from tools.runtime import (  # noqa: E402
 )
 
 
-def cmd_sandbox_exec(args: argparse.Namespace) -> None:
-    runtime = container_runtime()
-    macos_runtime = macos_sandbox_exec()
-    run_dir = run_path(args.run_dir)
-    out_dir = run_dir / "evidence" / "sandbox"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    stamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
-    base = out_dir / f"sandbox_{stamp}"
-    if not runtime:
-        if macos_runtime:
-            policy = args.policy or "macos-no-network"
-            if policy not in {"none", "macos-no-network"}:
-                raise SystemExit("macOS sandbox fallback supports policy=macos-no-network or none")
-            allowed_write_paths = [out_dir.resolve()]
-            for mount in args.mount or []:
-                host, mode = mount.rsplit(":", 1) if ":" in mount else (mount, "ro")
-                if mode not in {"ro", "rw"}:
-                    raise SystemExit(f"mount mode must be ro or rw: {mount}")
-                if mode == "rw":
-                    allowed_write_paths.append(run_path(host).resolve())
-            profile_lines = [
-                "(version 1)",
-                "(allow default)",
-                "(deny network*)",
-                "(deny file-write*)",
-            ]
-            for path in allowed_write_paths:
-                profile_lines.append(f"(allow file-write* (subpath {json.dumps(str(path))}))")
-            profile = "\n".join(profile_lines) + "\n"
-            profile_path = base.with_suffix(".sb")
-            write_text(profile_path, profile)
-            argv = [macos_runtime, "-f", str(profile_path), "/bin/sh", "-lc", args.cmd]
-            result = run_tool_scan(argv, out_dir, base, args.timeout, env=tool_env("sandbox-exec"))
-            write_json(
-                base.with_suffix(".policy.json"),
-                {
-                    "policy": policy,
-                    "runtime": macos_runtime,
-                    "cmd": args.cmd,
-                    "argv": argv,
-                    "network": "denied",
-                    "write_paths": [str(path) for path in allowed_write_paths],
-                    "summary": rel(base.with_suffix(".summary.json")),
-                },
-            )
-            print(rel(base.with_suffix(".summary.json")))
-            if result["returncode"] != 0:
-                raise SystemExit(result["returncode"] if 0 < result["returncode"] < 126 else 1)
-            return
-        result = {
-            "status": "refused",
-            "reason": "Docker/Podman runtime and macOS sandbox-exec fallback not found; no raw-shell fallback is allowed.",
-            "cmd": args.cmd,
-            "image": args.image,
-        }
-        write_json(base.with_suffix(".policy.json"), result)
-        print(rel(base.with_suffix(".policy.json")))
-        raise SystemExit(2)
-    policy = args.policy or "none"
-    if policy != "none":
-        raise SystemExit("only policy=none is implemented in this foundation pass")
-    cmd = [
-        runtime,
-        "run",
-        "--rm",
-        "--network",
-        "none",
-        "--cpus",
-        str(args.cpus),
-        "--memory",
-        args.memory,
-        "--pids-limit",
-        str(args.pids),
-        "-v",
-        f"{out_dir.resolve()}:/evidence:rw",
-    ]
-    for mount in args.mount or []:
-        host, mode = mount.rsplit(":", 1) if ":" in mount else (mount, "ro")
-        if mode not in {"ro", "rw"}:
-            raise SystemExit(f"mount mode must be ro or rw: {mount}")
-        cmd.extend(["-v", f"{run_path(host).resolve()}:{run_path(host).resolve()}:{mode}"])
-    cmd.extend([args.image, "sh", "-lc", args.cmd])
-    result = run_cmd(cmd, ROOT, timeout=args.timeout)
-    write_json(base.with_suffix(".policy.json"), {"policy": policy, "runtime": runtime, "image": args.image, "cmd": args.cmd, "argv": cmd})
-    write_text(base.with_suffix(".out"), result["stdout"])
-    write_text(base.with_suffix(".err"), result["stderr"])
-    write_text(base.with_suffix(".status"), str(result["returncode"]) + "\n")
-    print(rel(base.with_suffix(".status")))
-    if result["returncode"] != 0:
-        raise SystemExit(result["returncode"] if 0 < result["returncode"] < 126 else 1)
-
-
-def cmd_tool_gap_add(args: argparse.Namespace) -> None:
-    run_dir = run_path(args.run_dir)
-    log_tool_gap(run_dir, args.candidate_id or "", args.missing_class, args.context or "")
-    print(rel(tool_gaps_path()))
-
-
-def cmd_tool_gaps(args: argparse.Namespace) -> None:
-    rows = read_jsonl(tool_gaps_path())
-    counts: dict[str, int] = {}
-    for row in rows:
-        key = str(row.get("missing_class") or "unknown")
-        counts[key] = counts.get(key, 0) + 1
-    ranked = [{"missing_class": key, "count": value} for key, value in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))]
-    if args.json:
-        print(json.dumps({"tool_gaps": ranked, "entries": rows if args.entries else []}, indent=2, sort_keys=False))
-    else:
-        for item in ranked:
-            print(f"{item['count']} {item['missing_class']}")
-
-
+# cmd_sandbox_exec moved to tools.commands.
+# cmd_tool_gap_add moved to tools.commands.
+# cmd_tool_gaps moved to tools.commands.
 # tool_scan_base / refuse_missing_tool / materialize_capped_file / run_tool_scan
 # / _ensure_runtime_or_local / _load_tool_module moved to tools/runtime.py
 # (re-imported above and here for harness.* compatibility).
@@ -7235,504 +6575,25 @@ from tools.runtime import (  # noqa: E402
 )
 
 
-def _authorize_scan(run_dir: Path, target_url: str | None, scanner: str) -> None:
-    """Fail-closed scope + ROE gate. Refuses before any scanner subprocess runs.
-
-    Loads the run's target profile and delegates to gates.authorization. On deny
-    a structured JSON refusal record is written under the run's logs and the
-    command exits non-zero without spawning the scanner.
-    """
-    sys.path.insert(0, str(ROOT / "vapt" / "harness"))
-    from gates.authorization import authorize, AuthorizationError
-
-    _state, target = load_run(run_dir)
-    try:
-        authorize(run_dir, target, target_url, scanner)
-    except AuthorizationError as exc:
-        print(json.dumps({"authorization": "denied", **exc.record}, indent=2))
-        raise SystemExit(2)
-
-
-def cmd_scope_check(args: argparse.Namespace) -> None:
-    """Dry-run the scope/ROE gate without executing any scanner."""
-    sys.path.insert(0, str(ROOT / "vapt" / "harness"))
-    from gates.authorization import evaluate
-
-    run_dir = run_path(args.run_dir)
-    _state, target = load_run(run_dir)
-    record = evaluate(target, args.target_url, args.scanner)
-    print(json.dumps(record, indent=2))
-    if record["decision"] != "allow":
-        raise SystemExit(2)
-
-
-def cmd_scan_zap_baseline(args: argparse.Namespace) -> None:
-    zap_mod = _load_tool_module("zap")
-
-    run_dir = run_path(args.run_dir)
-    _authorize_scan(run_dir, args.target_url, "zap-baseline")
-    base = tool_scan_base(run_dir, "zap-baseline")
-    out_dir = base.parent
-    runtime, _ = _ensure_runtime_or_local(
-        "zap-baseline", None, base,
-        f"install Docker/Podman to pull {zap_mod.ZAP_IMAGE} or run ZAP locally and expose zap-baseline.py on PATH",
-    )
-    argv = zap_mod.baseline_argv(
-        runtime,
-        target_url=args.target_url,
-        out_dir=out_dir,
-        report_name=f"{base.name}.json",
-        extra_zap_args=args.extra or [],
-        network=args.network,
-    )
-    result = run_tool_scan(argv, ROOT, base, args.timeout, env=tool_env("zap"))
-    report_path = out_dir / f"{base.name}.json"
-    summary = zap_mod.parse_baseline_report(report_path)
-    write_json(base.with_suffix(".findings.json"), summary)
-    print(rel(base.with_suffix(".findings.json")))
-    if result["returncode"] not in (0, 1, 2):
-        raise SystemExit(result["returncode"])
-
-
-def cmd_scan_zap_full(args: argparse.Namespace) -> None:
-    zap_mod = _load_tool_module("zap")
-
-    run_dir = run_path(args.run_dir)
-    _authorize_scan(run_dir, args.target_url, "zap-full")
-    base = tool_scan_base(run_dir, "zap-full")
-    out_dir = base.parent
-    runtime, _ = _ensure_runtime_or_local(
-        "zap-full", None, base,
-        f"install Docker/Podman to pull {zap_mod.ZAP_IMAGE}",
-    )
-    argv = zap_mod.full_scan_argv(
-        runtime,
-        target_url=args.target_url,
-        out_dir=out_dir,
-        report_name=f"{base.name}.json",
-        extra_zap_args=args.extra or [],
-        network=args.network,
-    )
-    result = run_tool_scan(argv, ROOT, base, args.timeout, env=tool_env("zap"))
-    report_path = out_dir / f"{base.name}.json"
-    summary = zap_mod.parse_baseline_report(report_path)
-    write_json(base.with_suffix(".findings.json"), summary)
-    print(rel(base.with_suffix(".findings.json")))
-    if result["returncode"] not in (0, 1, 2):
-        raise SystemExit(result["returncode"])
-
-
-def cmd_scan_sqlmap(args: argparse.Namespace) -> None:
-    sqlmap_mod = _load_tool_module("sqlmap")
-
-    run_dir = run_path(args.run_dir)
-    _authorize_scan(run_dir, args.target_url, "sqlmap")
-    base = tool_scan_base(run_dir, "sqlmap")
-    out_dir = base.parent
-    runtime, local_bin = _ensure_runtime_or_local(
-        "sqlmap", "sqlmap", base,
-        f"install Docker/Podman to pull {sqlmap_mod.SQLMAP_IMAGE} or `pip install sqlmap` into .venv-vapt",
-    )
-    if runtime:
-        argv = sqlmap_mod.scan_argv(
-            runtime,
-            target_url=args.target_url,
-            request_file=Path(args.request_file) if args.request_file else None,
-            out_dir=out_dir,
-            extra_args=args.extra or [],
-            network=args.network,
-        )
-    else:
-        argv = [local_bin, "--batch", "--random-agent", "--output-dir", str(out_dir)]
-        if args.target_url:
-            argv += ["-u", args.target_url]
-        if args.request_file:
-            argv += ["-r", args.request_file]
-        if args.extra:
-            argv += list(args.extra)
-    result = run_tool_scan(argv, ROOT, base, args.timeout, env=tool_env("sqlmap"))
-    summary = sqlmap_mod.parse_log(base.with_suffix(".out"))
-    write_json(base.with_suffix(".findings.json"), summary)
-    print(rel(base.with_suffix(".findings.json")))
-    if result["returncode"] not in (0, 1):
-        raise SystemExit(result["returncode"])
-
-
-def cmd_scan_jwt(args: argparse.Namespace) -> None:
-    jwt_mod = _load_tool_module("jwt")
-
-    run_dir = run_path(args.run_dir)
-    base = tool_scan_base(run_dir, "jwt")
-    token = args.token
-    if not token and args.token_file:
-        token = Path(args.token_file).read_text().strip()
-    if not token:
-        raise SystemExit("--token or --token-file required")
-    decoded = jwt_mod.decode_local(token)
-    write_json(base.with_suffix(".decode.json"), decoded)
-    if args.container:
-        runtime, _ = _ensure_runtime_or_local(
-            "jwt", None, base,
-            f"install Docker/Podman to pull {jwt_mod.JWT_IMAGE}",
-        )
-        argv = jwt_mod.inspect_argv(runtime, token=token, out_dir=base.parent)
-        result = run_tool_scan(argv, ROOT, base, args.timeout, env=tool_env("jwt"))
-        if result["returncode"] not in (0, 1):
-            raise SystemExit(result["returncode"])
-    print(rel(base.with_suffix(".decode.json")))
-
-
-def cmd_scan_screenshot(args: argparse.Namespace) -> None:
-    shot_mod = _load_tool_module("screenshot")
-
-    run_dir = run_path(args.run_dir)
-    _authorize_scan(run_dir, args.target_url, "screenshot")
-    base = tool_scan_base(run_dir, "screenshot")
-    out_dir = base.parent
-    runtime, local_bin = _ensure_runtime_or_local(
-        "screenshot", "playwright", base,
-        f"install Docker/Podman to pull {shot_mod.PLAYWRIGHT_IMAGE} or install playwright in .venv-vapt",
-    )
-    script_path = shot_mod.write_capture_script(out_dir)
-    image_name = f"{base.name}.png"
-    if runtime:
-        argv = shot_mod.capture_argv(
-            runtime, target_url=args.target_url, out_dir=out_dir,
-            script_path=script_path, image_name=image_name, wait_ms=args.wait_ms,
-            network=args.network,
-        )
-    else:
-        argv = [local_bin, "python", str(script_path), args.target_url, str(out_dir / image_name), str(args.wait_ms)]
-    result = run_tool_scan(argv, ROOT, base, args.timeout, env=tool_env("playwright"))
-    summary = {"image": rel(out_dir / image_name), "url": args.target_url}
-    write_json(base.with_suffix(".findings.json"), summary)
-    print(rel(base.with_suffix(".findings.json")))
-    if result["returncode"] != 0:
-        raise SystemExit(result["returncode"])
-
-
-def cmd_tools_capability(args: argparse.Namespace) -> None:
-    """Report which Move 3 tools are reachable via container or local."""
-    zap_mod = _load_tool_module("zap")
-    sqlmap_mod = _load_tool_module("sqlmap")
-    jwt_mod = _load_tool_module("jwt")
-    shot_mod = _load_tool_module("screenshot")
-    container_mod = _load_tool_module("container")
-    capability_report = container_mod.capability_report
-
-    runtime = container_runtime()
-    rows = [
-        capability_report("zap", runtime, find_tool("zap-baseline.py"), zap_mod.ZAP_IMAGE),
-        capability_report("sqlmap", runtime, find_tool("sqlmap"), sqlmap_mod.SQLMAP_IMAGE),
-        capability_report("jwt", runtime, find_tool("jwt_tool"), jwt_mod.JWT_IMAGE),
-        capability_report("screenshot", runtime, find_tool("playwright"), shot_mod.PLAYWRIGHT_IMAGE),
-    ]
-    payload = {
-        "runtime": runtime or "",
-        "tools": rows,
-        "ready_count": sum(1 for r in rows if r["available"]),
-        "total": len(rows),
-    }
-    if args.json:
-        print(json.dumps(payload, indent=2, sort_keys=False))
-    else:
-        for r in rows:
-            print(f"{r['tool']}: {r['mode']} (image={r['container_image']})")
-        print(f"ready={payload['ready_count']}/{payload['total']} runtime={payload['runtime'] or 'none'}")
-
-
-def cmd_scan_semgrep(args: argparse.Namespace) -> None:
-    run_dir = run_path(args.run_dir)
-    _, target = load_run(run_dir)
-    src = source_path(target)
-    base = tool_scan_base(run_dir, "semgrep")
-    tool = find_tool("semgrep")
-    if not tool:
-        refuse_missing_tool(base, "semgrep", "Install Semgrep in .venv-vapt or PATH.")
-    config = args.ruleset or str(ROOT / "vapt" / "harness" / "rules")
-    result = run_tool_scan(
-        [tool, "--config", config, "--json", "--timeout", str(args.timeout), str(src)],
-        ROOT,
-        base,
-        args.timeout + 30,
-        env=tool_env("semgrep"),
-    )
-    print(rel(base.with_suffix(".summary.json")))
-    if result["returncode"] not in (0, 1):
-        raise SystemExit(result["returncode"])
-
-
-def cmd_scan_bandit(args: argparse.Namespace) -> None:
-    run_dir = run_path(args.run_dir)
-    _, target = load_run(run_dir)
-    src = source_path(target)
-    base = tool_scan_base(run_dir, "bandit")
-    tool = find_tool("bandit")
-    if not tool:
-        refuse_missing_tool(base, "bandit", "Install bandit in .venv-vapt or PATH.")
-    argv = [
-        tool,
-        "-r",
-        str(src),
-        "-f",
-        "json",
-        "--severity-level",
-        args.severity_level,
-        "--confidence-level",
-        args.confidence_level,
-    ]
-    if args.config:
-        argv.extend(["-c", str(run_path(args.config))])
-    result = run_tool_scan(argv, ROOT, base, args.timeout, env=tool_env("bandit"))
-    print(rel(base.with_suffix(".summary.json")))
-    if result["returncode"] not in (0, 1):
-        raise SystemExit(result["returncode"])
-
-
-def python_requirement_file(src: Path) -> Path | None:
-    candidates = [
-        src / "requirements.txt",
-        src / "requirements-dev.txt",
-        src / "requirements_test.txt",
-        src / "dev-requirements.txt",
-    ]
-    for item in candidates:
-        if item.exists():
-            return item
-    matches = sorted(src.glob("requirements*.txt"))
-    return matches[0] if matches else None
-
-
-def cmd_scan_pip_audit(args: argparse.Namespace) -> None:
-    run_dir = run_path(args.run_dir)
-    _, target = load_run(run_dir)
-    src = source_path(target)
-    base = tool_scan_base(run_dir, "pip_audit")
-    tool = find_tool("pip-audit")
-    if not tool:
-        refuse_missing_tool(base, "pip-audit", "Install pip-audit in .venv-vapt or PATH.")
-    req = run_path(args.requirement) if args.requirement else python_requirement_file(src)
-    if req:
-        argv = [tool, "-r", str(req), "--format", "json", "--progress-spinner", "off"]
-    else:
-        argv = [tool, str(src), "--format", "json", "--progress-spinner", "off"]
-    result = run_tool_scan(argv, ROOT, base, args.timeout, env=tool_env("pip-audit"))
-    print(rel(base.with_suffix(".summary.json")))
-    if result["returncode"] not in (0, 1):
-        raise SystemExit(result["returncode"])
-
-
-def cmd_scan_osv(args: argparse.Namespace) -> None:
-    run_dir = run_path(args.run_dir)
-    _, target = load_run(run_dir)
-    src = source_path(target)
-    base = tool_scan_base(run_dir, "osv")
-    tool = find_tool("osv-scanner")
-    if not tool:
-        refuse_missing_tool(base, "osv-scanner", "Install osv-scanner in PATH for lockfile/package vulnerability scans.")
-    argv = [tool, "scan", "--format", "json", str(src)]
-    result = run_tool_scan(argv, ROOT, base, args.timeout, env=tool_env("osv-scanner"))
-    print(rel(base.with_suffix(".summary.json")))
-    if result["returncode"] not in (0, 1):
-        raise SystemExit(result["returncode"])
-
-
-def cmd_scan_codeql(args: argparse.Namespace) -> None:
-    run_dir = run_path(args.run_dir)
-    _, target = load_run(run_dir)
-    src = source_path(target)
-    base = tool_scan_base(run_dir, "codeql")
-    tool = find_tool("codeql")
-    if not tool:
-        refuse_missing_tool(base, "codeql", "Install the CodeQL CLI in PATH for CodeQL database analysis.")
-    if args.database:
-        database = run_path(args.database)
-    else:
-        if not args.create_database:
-            write_json(
-                base.with_suffix(".policy.json"),
-                {
-                    "status": "refused",
-                    "reason": "scan-codeql requires --database or explicit --create-database",
-                    "source_path": rel(src),
-                },
-            )
-            print(rel(base.with_suffix(".policy.json")))
-            raise SystemExit(2)
-        if not args.language:
-            raise SystemExit("--language is required with --create-database")
-        database = run_dir / "tool_scans" / "codeql_db" / args.language
-        create_base = tool_scan_base(run_dir, "codeql_create")
-        create_argv = [
-            tool,
-            "database",
-            "create",
-            str(database),
-            "--source-root",
-            str(src),
-            "--language",
-            args.language,
-            "--threads",
-            str(args.threads),
-        ]
-        create_result = run_tool_scan(create_argv, ROOT, create_base, args.timeout, env=tool_env("codeql"))
-        if create_result["returncode"] != 0:
-            print(rel(create_base.with_suffix(".summary.json")))
-            raise SystemExit(create_result["returncode"] if 0 < create_result["returncode"] < 126 else 1)
-    out_sarif = base.with_suffix(".sarif")
-    query = args.query or args.ql_pack or "security-extended"
-    argv = [
-        tool,
-        "database",
-        "analyze",
-        str(database),
-        query,
-        "--format",
-        "sarif-latest",
-        "--output",
-        str(out_sarif),
-        "--threads",
-        str(args.threads),
-    ]
-    result = run_tool_scan(argv, ROOT, base, args.timeout, env=tool_env("codeql"))
-    write_json(
-        base.with_suffix(".codeql.json"),
-        {
-            "database": str(database),
-            "query": query,
-            "sarif": rel(out_sarif),
-            "summary": rel(base.with_suffix(".summary.json")),
-        },
-    )
-    print(rel(base.with_suffix(".codeql.json")))
-    if result["returncode"] not in (0, 1, 2):
-        raise SystemExit(result["returncode"] if 0 < result["returncode"] < 126 else 1)
-
-
-def cmd_scan_trufflehog(args: argparse.Namespace) -> None:
-    run_dir = run_path(args.run_dir)
-    _, target = load_run(run_dir)
-    src = source_path(target)
-    base = tool_scan_base(run_dir, "trufflehog")
-    tool = find_tool("trufflehog")
-    if not tool:
-        refuse_missing_tool(base, "trufflehog", "Install trufflehog in PATH for secret scanning.")
-    argv = [tool, "filesystem", "--json", "--no-update", str(src)]
-    if args.only_verified:
-        argv.append("--only-verified")
-    result = run_tool_scan(argv, ROOT, base, args.timeout, env=tool_env("trufflehog"))
-    print(rel(base.with_suffix(".summary.json")))
-    if result["returncode"] not in (0, 183):
-        raise SystemExit(result["returncode"] if 0 < result["returncode"] < 126 else 1)
-
-
-def cmd_scan_tls(args: argparse.Namespace) -> None:
-    run_dir = run_path(args.run_dir) if args.run_dir else ROOT / "vapt" / "evidence" / "tls"
-    base = tool_scan_base(run_dir, "tls")
-    sslyze = find_tool("sslyze")
-    testssl = find_tool("testssl.sh")
-    if sslyze:
-        argv = [sslyze, "--certinfo", "--tlsv1_2", "--tlsv1_3", "--heartbleed", "--robot", args.host]
-    elif testssl:
-        argv = [testssl, "--fast", "--connect-timeout", "10", "--openssl-timeout", "20", args.host]
-    else:
-        refuse_missing_tool(base, "sslyze/testssl.sh", "Install sslyze or testssl.sh in PATH for TLS scans.")
-    result = run_tool_scan(argv, ROOT, base, args.timeout, env=tool_env("sslyze" if sslyze else "testssl.sh"))
-    print(rel(base.with_suffix(".summary.json")))
-    if result["returncode"] != 0:
-        raise SystemExit(result["returncode"] if 0 < result["returncode"] < 126 else 1)
-
-
-def cmd_scan_nuclei(args: argparse.Namespace) -> None:
-    run_dir = run_path(args.run_dir)
-    base = tool_scan_base(run_dir, "nuclei")
-    tool = find_tool("nuclei")
-    if not tool:
-        refuse_missing_tool(base, "nuclei", "Install nuclei in PATH for bounded template scans.")
-    templates = args.template or []
-    if not templates and not args.allow_default_templates:
-        write_json(
-            base.with_suffix(".policy.json"),
-            {
-                "status": "refused",
-                "reason": "nuclei requires explicit --template unless --allow-default-templates is set",
-                "url": args.url,
-            },
-        )
-        print(rel(base.with_suffix(".policy.json")))
-        raise SystemExit(2)
-    argv = [
-        tool,
-        "-u",
-        args.url,
-        "-jsonl",
-        "-rl",
-        str(args.rate_limit),
-        "-c",
-        str(args.concurrency),
-        "-timeout",
-        str(args.template_timeout),
-        "-retries",
-        "0",
-        "-no-stdin",
-    ]
-    for template in templates:
-        argv.extend(["-t", template])
-    result = run_tool_scan(argv, ROOT, base, args.timeout, env=tool_env("nuclei"))
-    print(rel(base.with_suffix(".summary.json")))
-    if result["returncode"] not in (0, 1):
-        raise SystemExit(result["returncode"])
-
-
-def cmd_scan_headers(args: argparse.Namespace) -> None:
-    out_dir = ROOT / "vapt" / "evidence" / "headers"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    stamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
-    out = out_dir / f"headers_{stamp}.json"
-    result = run_cmd(["curl", "-I", "-L", "--max-time", str(args.timeout), args.url], ROOT, timeout=args.timeout + 5)
-    write_json(out, {"url": args.url, "result": result})
-    print(rel(out))
-    if result["returncode"] != 0:
-        raise SystemExit(result["returncode"])
-
-
-def cmd_tool_health(args: argparse.Namespace) -> None:
-    tools = [
-        "semgrep",
-        "bandit",
-        "pip-audit",
-        "osv-scanner",
-        "trufflehog",
-        "sslyze",
-        "testssl.sh",
-        "nuclei",
-        "codeql",
-    ]
-    rows = []
-    for tool in tools:
-        path = find_tool(tool)
-        item: dict[str, Any] = {"tool": tool, "available": bool(path), "path": path or ""}
-        if path and args.versions:
-            version_cmd = [path, "--version"]
-            if tool == "testssl.sh":
-                version_cmd = [path, "--version"]
-            elif tool == "nuclei":
-                version_cmd = [path, "-version"]
-            elif tool == "sslyze":
-                version_cmd = [path, "-h"]
-            result = run_cmd(version_cmd, ROOT, timeout=5, env=tool_env(tool))
-            item["version_returncode"] = result["returncode"]
-            item["version"] = (result["stdout"] or result["stderr"]).strip().splitlines()[:3]
-        rows.append(item)
-    out = {"tools": rows}
-    if args.json:
-        print(json.dumps(out, indent=2, sort_keys=False))
-    else:
-        for row in rows:
-            status = "ok" if row["available"] else "missing"
-            print(f"{status:7} {row['tool']} {row['path']}")
-
-
+# _authorize_scan moved to tools.commands.
+# cmd_scope_check moved to tools.commands.
+# cmd_scan_zap_baseline moved to tools.commands.
+# cmd_scan_zap_full moved to tools.commands.
+# cmd_scan_sqlmap moved to tools.commands.
+# cmd_scan_jwt moved to tools.commands.
+# cmd_scan_screenshot moved to tools.commands.
+# cmd_tools_capability moved to tools.commands.
+# cmd_scan_semgrep moved to tools.commands.
+# cmd_scan_bandit moved to tools.commands.
+# python_requirement_file moved to tools.commands.
+# cmd_scan_pip_audit moved to tools.commands.
+# cmd_scan_osv moved to tools.commands.
+# cmd_scan_codeql moved to tools.commands.
+# cmd_scan_trufflehog moved to tools.commands.
+# cmd_scan_tls moved to tools.commands.
+# cmd_scan_nuclei moved to tools.commands.
+# cmd_scan_headers moved to tools.commands.
+# cmd_tool_health moved to tools.commands.
 def read_tool_records(path: Path) -> list[Any]:
     text = path.read_text(encoding="utf-8", errors="replace")
     stripped = text.strip()
@@ -7774,136 +6635,36 @@ def scanner_severity_rank(severity: str) -> int:
     return order.get(str(severity or "").lower(), 0)
 
 
-def normalize_scanner_findings(tool: str, records: list[Any], source_file: Path, include_low: bool) -> list[dict[str, Any]]:
-    findings: list[dict[str, Any]] = []
+# normalize_scanner_findings moved to tools.commands.
+# Functions moved to tools.commands.
+from tools.commands import (  # noqa: E402
+    _authorize_scan,
+    cmd_sandbox_exec,
+    cmd_scan_bandit,
+    cmd_scan_codeql,
+    cmd_scan_headers,
+    cmd_scan_jwt,
+    cmd_scan_nuclei,
+    cmd_scan_osv,
+    cmd_scan_pip_audit,
+    cmd_scan_screenshot,
+    cmd_scan_semgrep,
+    cmd_scan_sqlmap,
+    cmd_scan_tls,
+    cmd_scan_trufflehog,
+    cmd_scan_zap_baseline,
+    cmd_scan_zap_full,
+    cmd_scope_check,
+    cmd_tool_gap_add,
+    cmd_tool_gaps,
+    cmd_tool_health,
+    cmd_tools_capability,
+    log_tool_gap,
+    normalize_scanner_findings,
+    python_requirement_file,
+    tool_gaps_path,
+)
 
-    def add(item: dict[str, Any]) -> None:
-        severity = str(item.get("severity") or "info").lower()
-        if not include_low and scanner_severity_rank(severity) < 2:
-            return
-        item.setdefault("tool", tool)
-        item.setdefault("source_file", rel(source_file))
-        item.setdefault("cwe", "")
-        item.setdefault("cve", "N/A")
-        item.setdefault("evidence", "")
-        item.setdefault("matched_at", item.get("file", "") or item.get("package", ""))
-        findings.append(item)
-
-    if tool == "bandit":
-        for record in records:
-            for result in (record or {}).get("results", []) if isinstance(record, dict) else []:
-                cwe = ""
-                cwe_raw = result.get("issue_cwe") or result.get("cwe")
-                if isinstance(cwe_raw, dict):
-                    cwe = first_cwe(cwe_raw.get("id") or cwe_raw.get("link"))
-                else:
-                    cwe = first_cwe(cwe_raw)
-                add(
-                    {
-                        "title": f"Bandit {result.get('test_id', '')}: {result.get('test_name') or 'Python static finding'}",
-                        "severity": str(result.get("issue_severity", "info")).lower(),
-                        "confidence": result.get("issue_confidence", ""),
-                        "file": result.get("filename", ""),
-                        "line": result.get("line_number", ""),
-                        "cwe": cwe,
-                        "cve": "N/A",
-                        "evidence": result.get("issue_text", ""),
-                    }
-                )
-    elif tool == "semgrep":
-        for record in records:
-            for result in (record or {}).get("results", []) if isinstance(record, dict) else []:
-                extra = result.get("extra") or {}
-                metadata = extra.get("metadata") or {}
-                add(
-                    {
-                        "title": f"Semgrep {result.get('check_id', '')}",
-                        "severity": str(extra.get("severity", "info")).lower(),
-                        "confidence": metadata.get("confidence", ""),
-                        "file": result.get("path", ""),
-                        "line": (result.get("start") or {}).get("line", ""),
-                        "cwe": first_cwe(metadata.get("cwe") or metadata.get("cwe_id")),
-                        "cve": first_cve(metadata.get("cve"), metadata.get("references")),
-                        "evidence": extra.get("message", ""),
-                    }
-                )
-    elif tool in {"nuclei", "nuclei-jsonl"}:
-        for result in records:
-            if not isinstance(result, dict):
-                continue
-            info = result.get("info") or {}
-            classification = info.get("classification") or {}
-            add(
-                {
-                    "title": f"Nuclei {result.get('template-id', '')}: {info.get('name') or 'template match'}",
-                    "severity": str(info.get("severity", "info")).lower(),
-                    "confidence": result.get("matcher-status", ""),
-                    "matched_at": result.get("matched-at", ""),
-                    "file": result.get("template-path", ""),
-                    "line": "",
-                    "cwe": first_cwe(classification.get("cwe-id")),
-                    "cve": first_cve(classification.get("cve-id")),
-                    "evidence": result.get("extracted-results") or result.get("matcher-name") or result.get("template-id", ""),
-                }
-            )
-    elif tool == "pip-audit":
-        for record in records:
-            dependencies = (record or {}).get("dependencies", []) if isinstance(record, dict) else []
-            for dep in dependencies:
-                for vuln in dep.get("vulns", []) or []:
-                    aliases = vuln.get("aliases") or []
-                    add(
-                        {
-                            "title": f"pip-audit vulnerable dependency: {dep.get('name')} {dep.get('version')} {vuln.get('id')}",
-                            "severity": "medium",
-                            "confidence": "scanner",
-                            "package": dep.get("name", ""),
-                            "version": dep.get("version", ""),
-                            "fixed_versions": vuln.get("fix_versions", []),
-                            "cwe": first_cwe(vuln.get("cwe")),
-                            "cve": first_cve(vuln.get("id"), aliases),
-                            "evidence": vuln.get("description", ""),
-                        }
-                    )
-    elif tool == "osv":
-        for record in records:
-            results = (record or {}).get("results", []) if isinstance(record, dict) else []
-            for result in results:
-                for package in result.get("packages", []) or []:
-                    pkg = package.get("package") or {}
-                    for vuln in package.get("vulnerabilities", []) or []:
-                        add(
-                            {
-                                "title": f"OSV vulnerable dependency: {pkg.get('name', '')} {vuln.get('id', '')}",
-                                "severity": "medium",
-                                "confidence": "scanner",
-                                "package": pkg.get("name", ""),
-                                "version": pkg.get("version", ""),
-                                "cwe": first_cwe(vuln.get("database_specific", {}).get("cwe_ids", [])),
-                                "cve": first_cve(vuln.get("id"), vuln.get("aliases", [])),
-                                "evidence": vuln.get("summary") or vuln.get("details", ""),
-                            }
-                        )
-    elif tool == "trufflehog":
-        for result in records:
-            if not isinstance(result, dict):
-                continue
-            verified = bool(result.get("Verified"))
-            add(
-                {
-                    "title": f"TruffleHog secret finding: {result.get('DetectorName') or result.get('DetectorType') or 'secret'}",
-                    "severity": "high" if verified else "medium",
-                    "confidence": "verified" if verified else "unverified",
-                    "file": str(result.get("SourceMetadata") or result.get("SourceName") or ""),
-                    "line": "",
-                    "cwe": "CWE-798",
-                    "cve": "N/A",
-                    "evidence": "Secret material redacted; review raw TruffleHog JSON in evidence only.",
-                }
-            )
-    else:
-        raise SystemExit(f"unsupported tool parser: {tool}")
-    return findings
 
 
 def candidate_from_tool_finding(item: dict[str, Any], cand_id: str) -> dict[str, Any]:
@@ -8173,181 +6934,37 @@ from watch.state import (  # noqa: E402
 )
 
 
-def load_surface_terms(names: list[str]) -> list[str]:
-    terms: list[str] = []
-    surfaces, _graph = load_surface_config()
-    for name in names:
-        fixed = surfaces.get(name, [])
-        terms.extend(str(item) for item in fixed)
-        if name not in surfaces:
-            terms.append(name)
-    if not terms:
-        terms = SECURITY_DIFF_PATTERNS
-    seen = set()
-    out = []
-    for term in terms:
-        if term and term not in seen:
-            seen.add(term)
-            out.append(term)
-    return out
+# load_surface_terms moved to source.commands.
+# Functions moved to source.commands.
+from source.commands import (  # noqa: E402
+    _function_defs,
+    _is_default_excluded,
+    _load_semantic_graph,
+    _load_source_graph,
+    _source_files,
+    _taint_function,
+    cmd_semantic_graph,
+    cmd_source_acquire,
+    cmd_source_graph,
+    cmd_source_index,
+    cmd_source_probe,
+    cmd_surfaces_test,
+    cmd_taint_trace,
+    load_surface_config,
+    load_surface_terms,
+)
 
 
-def diff_pattern_hits(diff_text: str, trigger_patterns: list[str]) -> list[dict[str, Any]]:
-    hits = []
-    terms = load_surface_terms(trigger_patterns)
-    lowered = diff_text.lower()
-    for term in terms:
-        if term.lower() in lowered:
-            matching_lines = [line for line in diff_text.splitlines() if term.lower() in line.lower()][:10]
-            hits.append({"pattern": term, "lines": matching_lines})
-    return hits
 
-
+# diff_pattern_hits moved to watch.polling.
 # queue_write_entry / queue_entries moved to watch/state.py.
 from watch.state import queue_entries, queue_write_entry  # noqa: E402
 
 
-def resolve_watch_repo_path(profile: dict[str, Any], source: dict[str, Any]) -> Path | None:
-    raw = source.get("repo_path") or profile.get("repo_path")
-    if not raw:
-        target_file, target = _load_target_profile(str(profile.get("target_id") or ""))
-        if target_file and target_file.exists():
-            raw = target.get("source_path") or target.get("repo_path")
-    if not raw:
-        return None
-    return run_path(str(raw))
-
-
-def poll_local_git_source(profile: dict[str, Any], source: dict[str, Any], state: dict[str, Any], seed: bool) -> list[dict[str, Any]]:
-    target_id = str(profile["target_id"])
-    src = resolve_watch_repo_path(profile, source)
-    if not src:
-        return [{"kind": source.get("kind"), "status": "skipped", "reason": "no repo_path or target source_path"}]
-    branch = source.get("branch") or "HEAD"
-    head = run_cmd(["git", "rev-parse", branch], src, timeout=20)
-    if head["returncode"] != 0:
-        return [{"kind": source.get("kind"), "status": "error", "stderr": head["stderr"].strip()}]
-    current = head["stdout"].strip()
-    source_key = watch_source_key(source)
-    source_state = state.setdefault("sources", {}).setdefault(source_key, {})
-    previous = source_state.get("last_seen")
-    source_state["last_seen"] = current
-    source_state["last_polled_at"] = dt.datetime.now().isoformat(timespec="seconds")
-    if not previous and not seed:
-        return [{"kind": source.get("kind"), "status": "initialized", "head": current}]
-    if previous == current and not seed:
-        return [{"kind": source.get("kind"), "status": "unchanged", "head": current}]
-
-    ref_range = f"{previous}..{current}" if previous else current
-    paths = [str(item) for item in source.get("paths", [])]
-    diff_args = ["git", "diff", "--unified=20", ref_range, "--", *paths]
-    diff = run_cmd(diff_args, src, timeout=60)
-    names = run_cmd(["git", "diff", "--name-status", ref_range, "--", *paths], src, timeout=30)
-    diff_text = diff["stdout"] or ""
-    hits = diff_pattern_hits(diff_text, [str(item) for item in profile.get("trigger_patterns", [])])
-    status = "changed"
-    path = None
-    if hits or seed:
-        entry = {
-            "type": "commit_diff",
-            "source_kind": source.get("kind"),
-            "source_key": source_key,
-            "ref": current[:12],
-            "previous_ref": previous or "",
-            "repo_path": rel(src),
-            "branch": branch,
-            "paths": paths,
-            "matched_patterns": hits,
-            "changed_files": names["stdout"].splitlines(),
-            "diff_hunks": diff_text[:60000],
-            "candidate_seeds": [
-                {
-                    "title": f"Review security-relevant change {current[:12]} in {target_id}",
-                    "surface": ", ".join(paths) if paths else "changed source",
-                    "weakness": "TBD",
-                    "novelty": "fresh-change",
-                    "dedup": "unchecked",
-                    "next_action": "Create a run, inspect diff_hunks, and promote only with reachability/proof.",
-                }
-            ],
-        }
-        path = queue_write_entry(target_id, entry)
-        status = "queued"
-    return [
-        {
-            "kind": source.get("kind"),
-            "status": status,
-            "previous": previous or "",
-            "head": current,
-            "hits": len(hits),
-            "queue_entry": rel(path) if path else "",
-        }
-    ]
-
-
-def poll_local_release_source(profile: dict[str, Any], source: dict[str, Any], state: dict[str, Any], seed: bool) -> list[dict[str, Any]]:
-    target_id = str(profile["target_id"])
-    src = resolve_watch_repo_path(profile, source)
-    if not src:
-        return [{"kind": source.get("kind"), "status": "skipped", "reason": "no repo_path or target source_path"}]
-    latest = run_cmd(["git", "tag", "--sort=-creatordate"], src, timeout=20)
-    if latest["returncode"] != 0:
-        return [{"kind": source.get("kind"), "status": "error", "stderr": latest["stderr"].strip()}]
-    tags = [line.strip() for line in latest["stdout"].splitlines() if line.strip()]
-    if not tags:
-        return [{"kind": source.get("kind"), "status": "skipped", "reason": "no git tags found"}]
-    current = tags[0]
-    source_key = watch_source_key(source)
-    source_state = state.setdefault("sources", {}).setdefault(source_key, {})
-    previous = source_state.get("last_seen")
-    source_state["last_seen"] = current
-    source_state["last_polled_at"] = dt.datetime.now().isoformat(timespec="seconds")
-    if not previous and not seed:
-        return [{"kind": source.get("kind"), "status": "initialized", "release": current}]
-    if previous == current and not seed:
-        return [{"kind": source.get("kind"), "status": "unchanged", "release": current}]
-    path = queue_write_entry(
-        target_id,
-        {
-            "type": "release",
-            "source_kind": source.get("kind"),
-            "source_key": source_key,
-            "ref": current,
-            "previous_ref": previous or "",
-            "repo_path": rel(src),
-            "candidate_seeds": [
-                {
-                    "title": f"Review new release {current} for silent security fixes",
-                    "surface": "release diff",
-                    "weakness": "possible-regression",
-                    "novelty": "fresh-release",
-                    "next_action": "Run patch-mine across previous release to current release.",
-                }
-            ],
-        },
-    )
-    return [{"kind": source.get("kind"), "status": "queued", "release": current, "queue_entry": rel(path)}]
-
-
-def read_advisory_fixture(source: dict[str, Any]) -> list[dict[str, Any]]:
-    fixture = source.get("fixture")
-    if not fixture:
-        return []
-    path = run_path(str(fixture))
-    if not path.exists():
-        return []
-    if path.suffix.lower() in {".yaml", ".yml"}:
-        data = load_yaml(path) or {}
-    else:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    if isinstance(data, list):
-        return [item for item in data if isinstance(item, dict)]
-    if isinstance(data, dict):
-        rows = data.get("advisories") or data.get("vulns") or data.get("results") or []
-        return [item for item in rows if isinstance(item, dict)]
-    return []
-
-
+# resolve_watch_repo_path moved to watch.polling.
+# poll_local_git_source moved to watch.polling.
+# poll_local_release_source moved to watch.polling.
+# read_advisory_fixture moved to watch.polling.
 def as_list(value: Any) -> list[Any]:
     if value is None:
         return []
@@ -8371,203 +6988,15 @@ def lower_values(values: list[Any]) -> set[str]:
     return out
 
 
-def advisory_packages(row: dict[str, Any]) -> set[str]:
-    values = as_list(row.get("package")) + as_list(row.get("name")) + as_list(row.get("module"))
-    for affected in as_list(row.get("affected")):
-        if not isinstance(affected, dict):
-            continue
-        package = affected.get("package")
-        if isinstance(package, dict):
-            values.extend(as_list(package.get("name")))
-            values.extend(as_list(package.get("purl")))
-        else:
-            values.extend(as_list(package))
-    return lower_values(values)
-
-
-def advisory_ecosystems(row: dict[str, Any]) -> set[str]:
-    values = as_list(row.get("ecosystem"))
-    for affected in as_list(row.get("affected")):
-        if not isinstance(affected, dict):
-            continue
-        package = affected.get("package")
-        if isinstance(package, dict):
-            values.extend(as_list(package.get("ecosystem")))
-    return lower_values(values)
-
-
-def advisory_cwes(row: dict[str, Any]) -> set[str]:
-    values = as_list(row.get("cwe")) + as_list(row.get("cwes")) + as_list(row.get("cwe_ids"))
-    db = row.get("database_specific")
-    if isinstance(db, dict):
-        values.extend(as_list(db.get("cwe_ids")))
-        values.extend(as_list(db.get("cwe")))
-    return {str(value).strip().upper() for value in values if str(value).strip()}
-
-
-def advisory_versions(row: dict[str, Any]) -> dict[str, Any]:
-    versions: dict[str, Any] = {"affected_versions": [], "ranges": []}
-    versions["affected_versions"].extend(as_list(row.get("versions")))
-    versions["affected_versions"].extend(as_list(row.get("affected_versions")))
-    for affected in as_list(row.get("affected")):
-        if not isinstance(affected, dict):
-            continue
-        versions["affected_versions"].extend(as_list(affected.get("versions")))
-        for range_item in as_list(affected.get("ranges")):
-            if isinstance(range_item, dict):
-                versions["ranges"].append(range_item)
-    return versions
-
-
-def advisory_match(profile: dict[str, Any], source: dict[str, Any], row: dict[str, Any]) -> tuple[bool, list[str]]:
-    source_packages = lower_values(as_list(source.get("package")) + as_list(source.get("package_aliases")) + as_list(profile.get("package_aliases")))
-    source_ecosystems = lower_values(as_list(source.get("ecosystem")) + as_list(profile.get("ecosystem")))
-    source_cwes = {str(item).upper() for item in as_list(source.get("cwe")) + as_list(source.get("cwes")) + as_list(profile.get("cwe")) + as_list(profile.get("cwes"))}
-    row_packages = advisory_packages(row)
-    row_ecosystems = advisory_ecosystems(row)
-    row_cwes = advisory_cwes(row)
-    reasons = []
-    if source_packages and row_packages and source_packages & row_packages:
-        reasons.append(f"package:{', '.join(sorted(source_packages & row_packages))}")
-    if source_ecosystems and row_ecosystems and source_ecosystems & row_ecosystems:
-        reasons.append(f"ecosystem:{', '.join(sorted(source_ecosystems & row_ecosystems))}")
-    if source_cwes and row_cwes and source_cwes & row_cwes:
-        reasons.append(f"cwe:{', '.join(sorted(source_cwes & row_cwes))}")
-    trigger_terms = lower_values(as_list(profile.get("trigger_patterns")))
-    row_text = json.dumps(row, sort_keys=True).lower()
-    trigger_overlap = sorted(term for term in trigger_terms if term and term in row_text)
-    if trigger_overlap:
-        reasons.append(f"trigger:{', '.join(trigger_overlap[:5])}")
-
-    package_required = bool(source_packages)
-    ecosystem_required = bool(source_ecosystems and row_ecosystems)
-    package_ok = not package_required or bool(source_packages & row_packages)
-    ecosystem_ok = not ecosystem_required or bool(source_ecosystems & row_ecosystems)
-    cwe_or_trigger_ok = bool((source_cwes & row_cwes) or trigger_overlap or not source_cwes)
-    return package_ok and ecosystem_ok and cwe_or_trigger_ok, reasons
-
-
-def advisory_patch_range(row: dict[str, Any]) -> str:
-    for key in ("patch_range", "fixed_range", "git_range", "commit_range"):
-        value = row.get(key)
-        if value:
-            return str(value)
-    db = row.get("database_specific")
-    if isinstance(db, dict):
-        for key in ("patch_range", "fixed_range", "git_range", "commit_range"):
-            value = db.get(key)
-            if value:
-                return str(value)
-    return ""
-
-
-def advisory_fixed_commit(row: dict[str, Any]) -> str:
-    for key in ("fixed_commit", "fixed_commit_sha", "fix_commit", "commit"):
-        value = row.get(key)
-        if value:
-            return str(value)
-    db = row.get("database_specific")
-    if isinstance(db, dict):
-        for key in ("fixed_commit", "fixed_commit_sha", "fix_commit", "commit"):
-            value = db.get(key)
-            if value:
-                return str(value)
-    return ""
-
-
-def advisory_patch_enrichment(profile: dict[str, Any], source: dict[str, Any], row: dict[str, Any]) -> dict[str, Any]:
-    src = resolve_watch_repo_path(profile, source)
-    if not src:
-        return {"available": False, "reason": "no local repo_path for patch enrichment"}
-    patch_range = advisory_patch_range(row)
-    fixed_commit = advisory_fixed_commit(row)
-    if not patch_range and fixed_commit:
-        parent = run_cmd(["git", "rev-parse", f"{fixed_commit}^"], src, timeout=20)
-        if parent["returncode"] == 0:
-            patch_range = f"{parent['stdout'].strip()}..{fixed_commit}"
-        else:
-            patch_range = f"{fixed_commit}^..{fixed_commit}"
-    if not patch_range:
-        return {"available": False, "reason": "advisory did not include patch_range or fixed_commit"}
-    paths = [str(item) for item in source.get("paths", [])]
-    diff = run_cmd(["git", "diff", "--unified=20", patch_range, "--", *paths], src, timeout=60)
-    names = run_cmd(["git", "diff", "--name-status", patch_range, "--", *paths], src, timeout=30)
-    diff_text = diff["stdout"] or ""
-    return {
-        "available": diff["returncode"] == 0,
-        "repo_path": rel(src),
-        "range": patch_range,
-        "paths": paths,
-        "changed_files": names["stdout"].splitlines(),
-        "matched_patterns": diff_pattern_hits(diff_text, [str(item) for item in profile.get("trigger_patterns", [])]),
-        "diff_hunks": diff_text[:60000],
-        "stderr": diff["stderr"].strip(),
-    }
-
-
-def poll_fixture_advisories(profile: dict[str, Any], source: dict[str, Any], state: dict[str, Any], seed: bool) -> list[dict[str, Any]]:
-    target_id = str(profile["target_id"])
-    source_key = watch_source_key(source)
-    source_state = state.setdefault("sources", {}).setdefault(source_key, {})
-    seen = set(source_state.get("seen_ids", []))
-    rows = read_advisory_fixture(source)
-    results = []
-    new_seen = set(seen)
-    for row in rows:
-        adv_id = str(row.get("id") or row.get("ghsa_id") or row.get("cve") or row.get("modified") or uuid.uuid4().hex)
-        if adv_id in seen and not seed:
-            continue
-        matched, match_reasons = advisory_match(profile, source, row)
-        if not matched:
-            continue
-        patch_enrichment = advisory_patch_enrichment(profile, source, row)
-        new_seen.add(adv_id)
-        path = queue_write_entry(
-            target_id,
-            {
-                "type": "advisory",
-                "source_kind": source.get("kind"),
-                "source_key": source_key,
-                "ref": adv_id,
-                "advisory": row,
-                "affected": {
-                    "packages": sorted(advisory_packages(row)),
-                    "ecosystems": sorted(advisory_ecosystems(row)),
-                    "cwes": sorted(advisory_cwes(row)),
-                    **advisory_versions(row),
-                },
-                "match_reasons": match_reasons,
-                "patch_enrichment": patch_enrichment,
-                "matched_patterns": [{"pattern": item, "lines": []} for item in profile.get("trigger_patterns", [])],
-                "candidate_seeds": [
-                    {
-                        "title": f"Review {adv_id} for regression or affected-version correction",
-                        "surface": str(row.get("summary") or row.get("details") or "advisory"),
-                        "weakness": str(row.get("cwe") or "possible-regression"),
-                        "novelty": "possible-regression",
-                        "dedup": "advisory-known",
-                        "next_action": "Cross-reference affected package/version and patch diff before candidate promotion.",
-                    }
-                ],
-            },
-        )
-        results.append(
-            {
-                "kind": source.get("kind"),
-                "status": "queued",
-                "advisory": adv_id,
-                "match_reasons": match_reasons,
-                "patch_enriched": bool(patch_enrichment.get("available")),
-                "queue_entry": rel(path),
-            }
-        )
-    source_state["seen_ids"] = sorted(new_seen)
-    source_state["last_polled_at"] = dt.datetime.now().isoformat(timespec="seconds")
-    if not results:
-        results.append({"kind": source.get("kind"), "status": "unchanged", "advisories_seen": len(new_seen)})
-    return results
-
-
+# advisory_packages moved to watch.polling.
+# advisory_ecosystems moved to watch.polling.
+# advisory_cwes moved to watch.polling.
+# advisory_versions moved to watch.polling.
+# advisory_match moved to watch.polling.
+# advisory_patch_range moved to watch.polling.
+# advisory_fixed_commit moved to watch.polling.
+# advisory_patch_enrichment moved to watch.polling.
+# poll_fixture_advisories moved to watch.polling.
 def fetch_json_url(url: str, token: str | None, timeout: int) -> Any:
     headers = {"Accept": "application/json", "User-Agent": "local-vapt-harness"}
     if token:
@@ -8577,264 +7006,36 @@ def fetch_json_url(url: str, token: str | None, timeout: int) -> Any:
         return json.loads(resp.read().decode("utf-8"))
 
 
-def poll_remote_source(profile: dict[str, Any], source: dict[str, Any], state: dict[str, Any], seed: bool, timeout: int) -> list[dict[str, Any]]:
-    if not source.get("allow_network"):
-        return [{"kind": source.get("kind"), "status": "skipped", "reason": "network polling requires source.allow_network=true"}]
-    target_id = str(profile["target_id"])
-    kind = source.get("kind")
-    source_key = watch_source_key(source)
-    source_state = state.setdefault("sources", {}).setdefault(source_key, {})
-    token = os.environ.get("GITHUB_TOKEN")
-    advisory_rows: list[dict[str, Any]] = []
-    try:
-        if kind == "github_commits":
-            repo = source["repo"]
-            branch = source.get("branch") or "main"
-            path_arg = f"&path={source.get('paths', [''])[0]}" if source.get("paths") else ""
-            url = f"https://api.github.com/repos/{repo}/commits?sha={branch}{path_arg}&per_page=1"
-            rows = fetch_json_url(url, token, timeout)
-            current = rows[0]["sha"] if rows else ""
-        elif kind == "github_releases":
-            repo = source["repo"]
-            row = fetch_json_url(f"https://api.github.com/repos/{repo}/releases/latest", token, timeout)
-            current = row.get("tag_name") or row.get("id")
-        elif kind == "ghsa_advisories":
-            package = source.get("package", "")
-            ecosystem = source.get("ecosystem", "")
-            url = f"https://api.github.com/advisories?type=reviewed&ecosystem={ecosystem}&affects={package}&per_page=10"
-            rows = fetch_json_url(url, token, timeout)
-            advisory_rows = [row for row in rows if isinstance(row, dict)]
-            current = rows[0].get("ghsa_id") if rows else ""
-        elif kind == "osv_advisories":
-            payload = {"package": {"name": source.get("package"), "ecosystem": source.get("ecosystem")}}
-            row = _http_json("POST", "https://api.osv.dev/v1/query", payload, timeout)
-            rows = row.get("vulns", [])
-            advisory_rows = [item for item in rows if isinstance(item, dict)]
-            current = rows[0].get("id") if rows else ""
-        else:
-            return [{"kind": kind, "status": "skipped", "reason": "unsupported remote source"}]
-    except Exception as exc:
-        return [{"kind": kind, "status": "error", "error": str(exc)}]
-    if kind in {"ghsa_advisories", "osv_advisories"}:
-        seen = set(source_state.get("seen_ids", []))
-        results = []
-        new_seen = set(seen)
-        for row in advisory_rows:
-            adv_id = str(row.get("id") or row.get("ghsa_id") or row.get("cve") or row.get("modified") or uuid.uuid4().hex)
-            if adv_id in seen and not seed:
-                continue
-            matched, match_reasons = advisory_match(profile, source, row)
-            if not matched:
-                continue
-            new_seen.add(adv_id)
-            patch_enrichment = advisory_patch_enrichment(profile, source, row)
-            path = queue_write_entry(
-                target_id,
-                {
-                    "type": "advisory",
-                    "source_kind": kind,
-                    "source_key": source_key,
-                    "ref": adv_id,
-                    "remote": True,
-                    "advisory": row,
-                    "affected": {
-                        "packages": sorted(advisory_packages(row)),
-                        "ecosystems": sorted(advisory_ecosystems(row)),
-                        "cwes": sorted(advisory_cwes(row)),
-                        **advisory_versions(row),
-                    },
-                    "match_reasons": match_reasons,
-                    "patch_enrichment": patch_enrichment,
-                    "candidate_seeds": [
-                        {
-                            "title": f"Review {adv_id} for regression or affected-version correction",
-                            "surface": str(row.get("summary") or row.get("details") or "remote advisory"),
-                            "weakness": ", ".join(sorted(advisory_cwes(row))) or "possible-regression",
-                            "novelty": "possible-regression",
-                            "dedup": "advisory-known",
-                            "next_action": "Cross-reference affected package/version and patch diff before candidate promotion.",
-                        }
-                    ],
-                },
-            )
-            results.append(
-                {
-                    "kind": kind,
-                    "status": "queued",
-                    "advisory": adv_id,
-                    "match_reasons": match_reasons,
-                    "patch_enriched": bool(patch_enrichment.get("available")),
-                    "queue_entry": rel(path),
-                }
-            )
-        source_state["seen_ids"] = sorted(new_seen)
-        source_state["last_polled_at"] = dt.datetime.now().isoformat(timespec="seconds")
-        if results:
-            return results
-        return [{"kind": kind, "status": "unchanged", "advisories_seen": len(new_seen)}]
-    previous = source_state.get("last_seen")
-    source_state["last_seen"] = current
-    source_state["last_polled_at"] = dt.datetime.now().isoformat(timespec="seconds")
-    if not current:
-        return [{"kind": kind, "status": "unchanged", "reason": "no remote item returned"}]
-    if previous == current and not seed:
-        return [{"kind": kind, "status": "unchanged", "ref": current}]
-    if not previous and not seed:
-        return [{"kind": kind, "status": "initialized", "ref": current}]
-    path = queue_write_entry(
-        target_id,
-        {
-            "type": str(kind).replace("github_", "").replace("_advisories", "_advisory"),
-            "source_kind": kind,
-            "source_key": source_key,
-            "ref": current,
-            "previous_ref": previous or "",
-            "remote": True,
-            "candidate_seeds": [
-                {
-                    "title": f"Review fresh {kind} event {current}",
-                    "surface": source.get("repo") or source.get("package") or "remote watch",
-                    "weakness": "TBD",
-                    "novelty": "fresh-watch-event",
-                    "next_action": "Fetch local source, patch-diff, dedup, and prove before promotion.",
-                }
-            ],
-        },
-    )
-    return [{"kind": kind, "status": "queued", "ref": current, "queue_entry": rel(path)}]
+# poll_remote_source moved to watch.polling.
+# poll_watch_source moved to watch.polling.
+# cmd_watch_add moved to watch.polling.
+# cmd_watch_list moved to watch.polling.
+# cmd_watch_tick moved to watch.polling.
+# cmd_watch_daemon moved to watch.polling.
+# Functions moved to watch.polling.
+from watch.polling import (  # noqa: E402
+    advisory_cwes,
+    advisory_ecosystems,
+    advisory_fixed_commit,
+    advisory_match,
+    advisory_packages,
+    advisory_patch_enrichment,
+    advisory_patch_range,
+    advisory_versions,
+    cmd_watch_add,
+    cmd_watch_daemon,
+    cmd_watch_list,
+    cmd_watch_tick,
+    diff_pattern_hits,
+    poll_fixture_advisories,
+    poll_local_git_source,
+    poll_local_release_source,
+    poll_remote_source,
+    poll_watch_source,
+    read_advisory_fixture,
+    resolve_watch_repo_path,
+)
 
-
-def poll_watch_source(profile: dict[str, Any], source: dict[str, Any], state: dict[str, Any], seed: bool, timeout: int) -> list[dict[str, Any]]:
-    kind = source.get("kind")
-    if source.get("fixture") and kind in {"ghsa_advisories", "osv_advisories"}:
-        return poll_fixture_advisories(profile, source, state, seed)
-    if kind == "github_commits" and resolve_watch_repo_path(profile, source):
-        return poll_local_git_source(profile, source, state, seed)
-    if kind == "github_releases" and resolve_watch_repo_path(profile, source):
-        return poll_local_release_source(profile, source, state, seed)
-    if kind in {"github_commits", "github_releases", "ghsa_advisories", "osv_advisories"}:
-        return poll_remote_source(profile, source, state, seed, timeout)
-    return [{"kind": kind, "status": "skipped", "reason": "unsupported source kind"}]
-
-
-def cmd_watch_add(args: argparse.Namespace) -> None:
-    path = watch_profile_path(args.target_id)
-    profile = load_yaml(path) if path.exists() else {"target_id": args.target_id, "sources": []}
-    profile.setdefault("target_id", args.target_id)
-    profile.setdefault("sources", [])
-    profile["poll_interval_minutes"] = args.poll_interval_minutes
-    if args.trigger_pattern:
-        profile["trigger_patterns"] = args.trigger_pattern
-    else:
-        profile.setdefault("trigger_patterns", [])
-    source: dict[str, Any] = {"kind": args.source}
-    for key in ("repo", "repo_path", "branch", "ecosystem", "package", "fixture"):
-        value = getattr(args, key)
-        if value:
-            source[key] = value
-    if args.package_alias:
-        source["package_aliases"] = args.package_alias
-    if args.cwe:
-        source["cwes"] = args.cwe
-    if args.path:
-        source["paths"] = args.path
-    if args.allow_network:
-        source["allow_network"] = True
-    profile["sources"].append(source)
-    dump_yaml(profile, path)
-    print(rel(path))
-
-
-def cmd_watch_list(args: argparse.Namespace) -> None:
-    profiles = load_watch_profiles(args.target)
-    rows = []
-    for profile in profiles:
-        target_id = str(profile["target_id"])
-        state = load_watch_state(target_id)
-        rows.append(
-            {
-                "target_id": target_id,
-                "path": rel(Path(profile["_path"])),
-                "sources": profile.get("sources", []),
-                "poll_interval_minutes": profile.get("poll_interval_minutes"),
-                "trigger_patterns": profile.get("trigger_patterns", []),
-                "queue_pending": len(queue_entries(target_id)),
-                "last_state_update": state.get("updated_at", ""),
-            }
-        )
-    if args.json:
-        print(json.dumps({"watches": rows}, indent=2, sort_keys=False))
-        return
-    for row in rows:
-        print(f"{row['target_id']}: sources={len(row['sources'])} pending={row['queue_pending']} updated={row['last_state_update'] or 'never'}")
-
-
-def cmd_watch_tick(args: argparse.Namespace) -> None:
-    profiles = load_watch_profiles(args.target)
-    if not profiles:
-        raise SystemExit("no watch profiles found")
-    tick = {"generated_at": dt.datetime.now().isoformat(timespec="seconds"), "profiles": []}
-    for profile in profiles:
-        target_id = str(profile["target_id"])
-        state = load_watch_state(target_id)
-        profile_result = {"target_id": target_id, "sources": []}
-        for source in profile.get("sources", []):
-            results = poll_watch_source(profile, source, state, args.seed, args.timeout)
-            profile_result["sources"].extend(results)
-        save_watch_state(target_id, state)
-        tick["profiles"].append(profile_result)
-    out_dir = watches_dir() / "ticks"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out = out_dir / f"watch_tick_{dt.datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-    write_json(out, tick)
-    if args.json:
-        print(json.dumps(tick, indent=2, sort_keys=False))
-    else:
-        print(rel(out))
-
-
-def cmd_watch_daemon(args: argparse.Namespace) -> None:
-    heartbeat = watches_dir() / "watch_daemon_heartbeat.jsonl"
-    stop = {"value": False}
-
-    def _stop(signum, frame):  # type: ignore[no-untyped-def]
-        stop["value"] = True
-
-    signal.signal(signal.SIGTERM, _stop)
-    signal.signal(signal.SIGINT, _stop)
-    started = time.monotonic()
-    iterations = 0
-    while not stop["value"]:
-        iterations += 1
-        try:
-            ns = argparse.Namespace(target=args.target, seed=False, timeout=args.timeout, json=True)
-            profiles = load_watch_profiles(args.target)
-            for profile in profiles:
-                state = load_watch_state(str(profile["target_id"]))
-                for source in profile.get("sources", []):
-                    poll_watch_source(profile, source, state, False, args.timeout)
-                save_watch_state(str(profile["target_id"]), state)
-            status = "ok"
-            error_msg = ""
-        except Exception as exc:
-            status = "error"
-            error_msg = str(exc)
-        rows = read_jsonl(heartbeat)
-        rows.append(
-            {
-                "at": dt.datetime.now().isoformat(timespec="seconds"),
-                "status": status,
-                "error": error_msg,
-                "iteration": iterations,
-            }
-        )
-        write_jsonl(heartbeat, rows[-1000:])
-        if args.max_iterations and iterations >= args.max_iterations:
-            break
-        if args.max_seconds and time.monotonic() - started >= args.max_seconds:
-            break
-        time.sleep(max(1, args.interval_seconds))
-    print(rel(heartbeat))
 
 
 def cmd_queue(args: argparse.Namespace) -> None:
