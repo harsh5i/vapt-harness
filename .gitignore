@@ -36,3 +36,6 @@ vapt/harness/tests/results/
 # and the cross-engagement corpus now live with the engine under vapt/harness/.
 vapt/engagements/*/
 !vapt/engagements/.gitkeep
+
+# Cloned target source for a run (target.yaml source_path); never committed.
+engagement/

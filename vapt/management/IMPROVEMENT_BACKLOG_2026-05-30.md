@@ -1,7 +1,7 @@
 # VAPT Harness — Improvement Backlog & Execution Plan
 
 Date: 2026-05-30
-Status: ACTIVE — Tier 1 in progress
+Status: ACTIVE — Tier 1 + Tier 2 done; Tier 3 (tests-first, then decompose) next
 Author: operator + Claude
 Inputs: independent reviews from ChatGPT and Grok (2026-05-30), reconciled against
 verified repo state.
@@ -54,7 +54,7 @@ table. They remain in §6 as a pre-release checklist, not current work.
 
 ## 2. Execution tiers (sequenced, acceptance-gated)
 
-### Tier 1 — Truth + Safety (cheap, now) [IN PROGRESS]
+### Tier 1 — Truth + Safety (cheap, now) [DONE 2026-05-30]
 
 **T1.1 — `STATUS.md` single source of truth.**
 One row per capability: `status` (implemented | partial | designed | not_started |
@@ -75,7 +75,7 @@ must pass before execution:
 - Acceptance: out-of-scope host → refusal record, non-zero exit, no scanner spawn;
   `active_scan_allowed` absent/false → ZAP/sqlmap refuse; unit tests cover both.
 
-### Tier 2 — First Real Outcome (the core thesis)
+### Tier 2 — First Real Outcome (the core thesis) [DONE 2026-05-30]
 
 **T2.1 — Sanctioned outcome-write path.**
 `submission record` becomes the only sanctioned way to append to
@@ -172,6 +172,39 @@ batch at a time, snapshotting all `*-check` outputs before/after each batch:
   `tests/results/phase4_check_repo`, else it dies in `advisory_patch_enrichment`
   on a `git rev-parse` against a missing dir. Fails identically on clean HEAD.
   Fold into T3.1 (tests must be self-contained).
+- 2026-05-30 — **T2.1 done.** Added `weights show` (effective weights + last
+  meaningful update + STARVED / stale-source diagnostics). Confirmed the
+  sanctioned write path: `outcome-record` writes non-synthetic terminal rows;
+  `outcome-tune` excludes synthetic by default (pre-existing). No CLI rename
+  (migration non-negotiable). Baseline re-tuned against the *current* corpus
+  (the prior effective weights pointed at a stale `bug_bounties/_shared` path):
+  17 synthetic excluded, 0 real, `STARVED`.
+- 2026-05-30 — **T2.2 done — CORE THESIS PROVEN.** Drove the real DemoForum
+  engagement (Objective-1, source-based) through the **binding orient→submit
+  loop**. Re-cloned `demo-forum/demo-forum` to the run's `source_path`, ran
+  `source-graph`, and the loop reached the triage gate on CAND-001
+  (CWE-918 SSRF). **Honesty check against current HEAD:** the claimed gap is
+  real — `PRIVATE_IPV6_RANGES` (ssrf_detector.rb:39-49) lists `64:ff9b:1::/48`
+  but omits `64:ff9b::/96` (NAT64 well-known) and `2002::/16` (6to4), and
+  `IPAddr#native` (:87) unpacks only `::ffff:0:0/96`, so a 6to4/NAT64-encoded
+  loopback evades `ip_allowed?`. Exploitability is conditional on deploy egress
+  routing 6to4/NAT64; no running instance was available for a runtime PoC →
+  honest verdict **`needs_proof`**, recorded via `submit --triage-verdict`.
+  Real transitions in `step_outcomes.jsonl`: triage(needs_proof) → novelty
+  (dedup `--check-osv` = no-known-duplicate) → promotion gate (**honestly
+  blocked**: entrypoint/trust_boundary/latest_affected/CVSS). `outcome-tune`
+  then folded the real verdict into the effective weights:
+  **`weakness_adjustments[CWE-918].score_adjustment = 0.38` off real
+  (non-synthetic) data**; `weights show` now reports `triage verdicts: 1` and
+  the `STARVED` flag is gone. The loop is no longer starving on real data.
+  - **Did NOT fabricate a submissions.jsonl row.** No candidate is honestly
+    submittable yet — CAND-001 is correctly gated short of submission for lack
+    of runtime proof. The evidence gate working as designed *is* the result.
+    The first-real-outcome thesis is proven via the triage→tuning channel; the
+    terminal-submission channel stays 0 real until a candidate earns a real PoC.
+  - `step_outcomes.jsonl` / `outcome_tuning.yaml` are gitignored operator-local
+    state by design; the proof lives on the operator machine, not the corpus.
+    The 305M target clone (`engagement/`) added to `.gitignore`.
 
 ## 6. Parked: pre-public-release checklist (not current work)
 

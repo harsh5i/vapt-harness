@@ -7166,6 +7166,75 @@ def cmd_outcome_tune(args: argparse.Namespace) -> None:
         print(rel(md_path))
 
 
+def cmd_weights_show(args: argparse.Namespace) -> None:
+    """Show the current effective tuning weights and when they were last
+    meaningfully updated. Read-only — does not recompute (use `outcome-tune`)."""
+    path = outcome_tuning_path()
+    tuning = load_outcome_tuning()
+    if not tuning:
+        payload = {
+            "effective_weights": rel(path),
+            "exists": False,
+            "note": "no effective weights yet; run `outcome-tune`",
+        }
+        if args.json:
+            print(json.dumps(payload, indent=2, sort_keys=False))
+        else:
+            print("no effective weights yet; run `outcome-tune`")
+        return
+
+    weakness = tuning.get("weakness_adjustments") or {}
+    module = tuning.get("module_adjustments") or {}
+    nonzero_weakness = {
+        k: v for k, v in weakness.items()
+        if isinstance(v, dict) and v.get("score_adjustment")
+    }
+    nonzero_module = {
+        k: v for k, v in module.items()
+        if isinstance(v, dict) and v.get("score_adjustment")
+    }
+    payload = {
+        "effective_weights": rel(path),
+        "generated_at": tuning.get("generated_at"),
+        "last_meaningful_update": tuning.get("generated_at"),
+        "source": tuning.get("source"),
+        "expected_source": rel(submissions_path()),
+        "source_is_current": tuning.get("source") == rel(submissions_path()),
+        "terminal_count": tuning.get("terminal_count", 0),
+        "triage_verdict_count": tuning.get("triage_verdict_count", 0),
+        "synthetic_excluded": tuning.get("synthetic_excluded", 0),
+        "nonzero_weakness_adjustments": nonzero_weakness,
+        "nonzero_module_adjustments": nonzero_module,
+        "starved": int(tuning.get("terminal_count", 0)) == 0
+        and int(tuning.get("triage_verdict_count", 0)) == 0,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=False))
+        return
+    print(f"effective weights: {payload['effective_weights']}")
+    print(f"last meaningful update: {payload['last_meaningful_update']}")
+    print(
+        f"terminal outcomes: {payload['terminal_count']}  "
+        f"triage verdicts: {payload['triage_verdict_count']}  "
+        f"synthetic excluded: {payload['synthetic_excluded']}"
+    )
+    if not payload["source_is_current"]:
+        print(
+            f"WARNING: weights computed from `{payload['source']}` "
+            f"(current corpus is `{payload['expected_source']}`) — re-run outcome-tune"
+        )
+    if payload["starved"]:
+        print("STARVED: no real terminal outcome or triage verdict has moved a weight yet")
+    if nonzero_weakness:
+        print("weakness adjustments:")
+        for k, v in sorted(nonzero_weakness.items()):
+            print(f"  {k}: score_adjustment={v.get('score_adjustment')}")
+    if nonzero_module:
+        print("module adjustments:")
+        for k, v in sorted(nonzero_module.items()):
+            print(f"  {k}: score_adjustment={v.get('score_adjustment')}")
+
+
 def cmd_submissions_stats(args: argparse.Namespace) -> None:
     rows = read_jsonl(submissions_path())
     stats = submission_stats(rows)
@@ -12157,6 +12226,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true")
     p.add_argument("--fail", action="store_true")
     p.set_defaults(func=cmd_outcome_tune_check)
+
+    p = sub.add_parser("weights", help="inspect effective outcome-tuning weights")
+    weights_sub = p.add_subparsers(required=True)
+    sp = weights_sub.add_parser("show", help="show current effective weights and last meaningful update")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_weights_show)
 
     p = sub.add_parser("phase2-check", help="run Phase 2 feedback-loop acceptance checks")
     p.add_argument("--run-dir", default="vapt/engagements/demo-target/runs/demo-target/2026-05-16-initial")

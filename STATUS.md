@@ -33,10 +33,10 @@ subprocess).
 
 | Capability | Status | Evidence | Validation command | Known gaps / next |
 |---|---|---|---|---|
-| Outcome-tuning loop | partial | `outcome-tune` computes weights from outcomes; `outcome-tune-check` passes | `python3 vapt/harness/harness.py outcome-tune-check` | **Corpus has 17 synthetic rows, 0 real.** Weights are static against synthetic. Core thesis unproven until a real outcome flows through (T2.2). |
+| Outcome-tuning loop | implemented | `outcome-tune` computes weights from outcomes + triage verdicts; **first real signal landed 2026-05-30**: a `needs_proof` triage verdict on DemoForum CWE-918 (6to4/NAT64 SSRF filter gap), produced via the binding orient→submit loop, shifted `weakness_adjustments[CWE-918].score_adjustment` to `0.38` off real (non-synthetic) data | `python3 vapt/harness/harness.py weights show` (shows `triage verdicts: 1`, no longer `STARVED`) | Core thesis proven for the triage channel. Terminal-submission channel still 0 real rows (no candidate is honestly submittable yet — CAND-001 is correctly gated short of submission for lack of runtime proof). |
 | Synthetic outcome seeding | implemented | `submissions seed-synthetic`; rows tagged `synthetic:true` | `python3 vapt/harness/harness.py submissions seed-synthetic --help` | — |
 | Synthetic excluded from tuning by default | implemented | harness.py:7046 `include_synthetic=False`; `--include-synthetic` flag :12117 | `python3 vapt/harness/harness.py outcome-tune --out /tmp/t.yaml` (reports `synthetic_excluded`) | — |
-| Sanctioned real-outcome write path | partial | `submissions` group exists | — | Confirm/strengthen a single `submission record` path; add `weights show` (effective weights + last update). T2.1. |
+| Sanctioned real-outcome write path | implemented | `outcome-record` is the non-synthetic terminal write path (rows carry no `synthetic` key); `outcome-tune` excludes synthetic by default; `weights show` reports effective weights + last meaningful update + STARVED/stale-source diagnostics | `python3 vapt/harness/harness.py weights show --json` | `outcome-record` and `submission add/update` coexist by design; no CLI rename (migration non-negotiable). |
 | OSV cache (offline dedup) | implemented | OSV cache + `dedup --check-osv` | `python3 vapt/harness/harness.py dedup --check-osv --help` | Needs a test proving offline failure ≠ false novelty. |
 
 ## Discovery & source-reading
