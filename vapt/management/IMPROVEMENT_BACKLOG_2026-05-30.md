@@ -152,10 +152,17 @@ batch at a time, snapshotting all `*-check` outputs before/after each batch:
   queries + `_osv_dedup` evidence writer + `COMMON_VARIANT_TERMS` +
   `_http_json` + `OSV_CACHE_FRESH_HOURS`). Bumped `_parse_time` into `core.py`
   as a leaf datetime utility (used widely; not OSV-specific). Verification
-  gate green: 65 tests, loop-integrity / intent-ordering byte-identical to
-  baseline, phase3 / phase4 / outcome-tune rc=0.
-- harness.py: 13,001 → 12,487 → 12,339 → **12,058** lines. Next batches up the
-  order: tool wrappers, watch, campaign, source, then CLI dispatcher.
+  gate green.
+- Batch 6: `tools/runtime.py` (container/local discovery — `container_runtime`,
+  `macos_sandbox_exec`, `find_tool`, `tool_env`; capped-output exec —
+  `run_tool_scan`, `materialize_capped_file`; tool-base + refuse — `tool_scan_base`,
+  `refuse_missing_tool`; runtime/local fallback — `_ensure_runtime_or_local`;
+  tool-module loader — `_load_tool_module`). The `cmd_scan_*` CLI handlers in
+  harness.py drive their subprocess work through these. Verification gate green:
+  65 tests, loop-integrity / intent-ordering byte-identical to baseline,
+  phase3 / phase4 / outcome-tune rc=0.
+- harness.py: 13,001 → 12,487 → 12,339 → 12,058 → **11,913** lines. Next
+  batches up the order: watch, campaign, source, then CLI dispatcher.
 
 ### Tier 4 — Ergonomics, Honesty, Packaging
 
