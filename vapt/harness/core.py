@@ -7,6 +7,7 @@ Extracted leaf modules import from here instead of reaching back into harness.
 """
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 from pathlib import Path
 from typing import Any
@@ -59,3 +60,11 @@ def candidate_corpus_path() -> Path:
 
 def outcome_tuning_path() -> Path:
     return ROOT / "vapt" / "harness" / "corpus" / "outcome_tuning.yaml"
+
+
+def _parse_time(value: str | None) -> dt.datetime | None:
+    if not value:
+        return None
+    with contextlib.suppress(ValueError):
+        return dt.datetime.fromisoformat(str(value))
+    return None

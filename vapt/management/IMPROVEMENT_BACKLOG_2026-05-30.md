@@ -147,10 +147,15 @@ batch at a time, snapshotting all `*-check` outputs before/after each batch:
   `update_candidate_locked`, `next_candidate_id`) + `ledger/submissions.py`
   (`submission_stats`, `candidate_outcome_metadata`, `enrich_submission_entry`,
   `load_outcome_tuning`) + `ledger/outcomes.py` (`_append_step_outcome`).
-  Verification gate green: 65 tests, loop-integrity / intent-ordering
-  byte-identical to baseline, phase3 / phase4 / outcome-tune rc=0.
-- harness.py: 13,001 → 12,487 → **12,339** lines. Next batches up the order:
-  osv/dedup, tool wrappers, watch, campaign, source, then CLI dispatcher.
+  Verification gate green.
+- Batch 5: `gates/osv.py` (OSV.dev SQLite cache + cache-aware package/vuln
+  queries + `_osv_dedup` evidence writer + `COMMON_VARIANT_TERMS` +
+  `_http_json` + `OSV_CACHE_FRESH_HOURS`). Bumped `_parse_time` into `core.py`
+  as a leaf datetime utility (used widely; not OSV-specific). Verification
+  gate green: 65 tests, loop-integrity / intent-ordering byte-identical to
+  baseline, phase3 / phase4 / outcome-tune rc=0.
+- harness.py: 13,001 → 12,487 → 12,339 → **12,058** lines. Next batches up the
+  order: tool wrappers, watch, campaign, source, then CLI dispatcher.
 
 ### Tier 4 — Ergonomics, Honesty, Packaging
 
