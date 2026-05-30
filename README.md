@@ -7,7 +7,8 @@ both URL-based probes and source-reading probes against authorized targets.
 
 **`STATUS.md` is the single source of truth** for what is actually implemented
 vs. partial vs. future. This README describes intent and usage; do not read a
-capability as working unless `STATUS.md` marks it `implemented`.
+capability as working unless `STATUS.md` marks it `implemented`. For day-to-day
+operator commands, see [`CHEATSHEET.md`](CHEATSHEET.md).
 
 Built across Phases 1-5. Phase 5 (2026-05-28) added the moves described
 in `management/MYTHOS_SUBSTRATE_PHASE5_ROADMAP_2026-05-28.md`:

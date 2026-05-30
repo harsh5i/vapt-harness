@@ -194,6 +194,13 @@ batch at a time, snapshotting all `*-check` outputs before/after each batch:
 
 - **T4.1** Operator cheat sheet (80% of daily usage on one page); make `orient` /
   next-action output concise by default.
+  **[PARTIAL 2026-05-30]** `CHEATSHEET.md` landed at repo root with lifecycle,
+  candidate workflow, intent/loop, outcomes/tuning, scanners, source reading,
+  campaigns, watch/queue, phase checks, and a "when something refuses"
+  troubleshooting table. README cross-links it. The conciseness flag for
+  `orient` / `next-action` is **deferred** — making the default less verbose is
+  a CLI behaviour change and requires a migration per the non-negotiable rule.
+  Track that separately when a migration path is acceptable.
 - **T4.2** Reframe capability language repo-wide: "evidence-gated vulnerability
   research harness for authorized assessment." Drop "autonomous 0day engine"
   framing. Logic-flaw 0day / protocol-state / memory-corruption / crypto → clearly
