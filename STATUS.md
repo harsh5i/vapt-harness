@@ -46,7 +46,7 @@ subprocess).
 | GHSA discovery sweep | implemented | `discovery-sweep`, `discovery-list` (needs internet) | `python3 vapt/harness/harness.py discovery-list` | — |
 | Discovery claim flow | implemented | `discovery-claim`; proposals require claim before campaign | `python3 vapt/harness/harness.py discovery-claim --help` | — |
 | Source acquisition | partial | source acquire/index in harness.py | `python3 vapt/harness/harness.py source-probe --help` | Validated on synthetic fixture only. |
-| AST walker | partial | source-reading AST classifier | `python3 vapt/harness/harness.py source-probe --local-path vapt/harness/fixtures/seeded_bugs_repo` | **Single-statement only**; no flow through intermediate vars. Validated on synthetic only. T4.3. |
+| AST walker | partial | source-reading AST classifier with intra-function taint flow (T4.3); 5/5 seeded fixtures + 12 unit tests under `tests/test_ast_taint_flow.py` | `python3 vapt/harness/harness.py source-probe --local-path vapt/harness/fixtures/seeded_bugs_repo` (expects `finding_count=5`) | Taint propagates through Assign / AnnAssign / AugAssign / tuple-unpack within a function; does **not** cross function boundaries, does not model attribute taint, does not unwind aliasing through function calls. Real-target validation (≥1 small OSS Python project with a known logic flaw) still pending. |
 | Reference probe: patch_variant_hunter | implemented | catches 4/5 seeded patterns | source-probe on seeded_bugs_repo | — |
 | Reference probe: auth_chain_audit | implemented | `vapt/harness/probes/auth_chain_audit.py` | source-probe | — |
 

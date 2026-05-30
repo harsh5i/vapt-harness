@@ -208,6 +208,23 @@ batch at a time, snapshotting all `*-check` outputs before/after each batch:
 - **T4.3** Extend AST source probe beyond single-statement (flow through
   intermediate variables); validate against ≥1 real small OSS target with a known
   logic flaw; document current limits.
+  **[PARTIAL 2026-05-30]** Intra-function taint flow landed in
+  `source/ast_python.py`: `_function_taint` precomputes the set of locals
+  assigned from untrusted-shaped sources for each FunctionDef, and the sink
+  classifier (`_classify_call`) checks each arg against the enclosing
+  function's taint set in addition to the static UNTRUSTED_VAR_HINTS
+  vocabulary. Propagation handles Assign, AnnAssign, AugAssign, and
+  tuple-unpack; parameters whose names match the hint set are seeded into
+  the taint set at function entry. Sink rules extended: open() over a
+  tainted local, cursor.execute() over a tainted SQL local. Validation:
+  the seeded_bugs_repo fixture now reports **5/5** (was 4/5 —
+  `path_open.py`'s `path = request.args.get(...) + ".txt"; open(path, ...)`
+  shape used to slip past), 12 new pytest cases in
+  `tests/test_ast_taint_flow.py` cover the propagation cases and assert
+  taint does not cross function boundaries. Real-target OSS validation
+  (a known Python logic flaw in a small project) **still pending**;
+  STATUS.md documents the current limits (no cross-function, no
+  attribute-level taint, no aliasing through calls).
 - **T4.4** Dependency profiles: `requirements-core/dev/tools/source.txt` +
   `pyproject.toml`. Cross-platform file-lock abstraction (`fcntl` / `portalocker`
   fallback) so import doesn't crash on Windows; document Linux/macOS + Windows

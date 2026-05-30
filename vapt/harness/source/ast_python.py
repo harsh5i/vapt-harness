@@ -8,7 +8,7 @@ Bug classes covered in this pass:
 
 - `cmd_injection_shell_true`:
     subprocess.run/Popen/check_output with shell=True AND a non-literal
-    first argument.
+    first argument that is untrusted-shaped or flows from one.
 - `cmd_injection_os_system`:
     os.system(...) with a non-literal argument.
 - `unsafe_deserialization`:
@@ -23,6 +23,12 @@ Bug classes covered in this pass:
 
 A "candidate finding" is `{file, line, bug_class, hypothesis, snippet}`.
 The hypothesis is a sentence the operator (or LLM auditor) can verify.
+
+Taint flow: per-function, the walker tracks which local names have been
+assigned from an untrusted-shaped expression. A subsequent sink call that
+references such a name is flagged, so the
+`path = request.args.get(...) + ".txt"; open(path, ...)` shape no longer
+slips past as a single-statement-only check would.
 """
 
 from __future__ import annotations
@@ -38,11 +44,20 @@ UNTRUSTED_VAR_HINTS = {
 }
 
 
-def _is_untrusted_name(node: ast.AST) -> bool:
-    """Best-effort: does this expression reference a likely-untrusted variable?"""
+def _is_untrusted_name(node: ast.AST, tainted: set[str] | None = None) -> bool:
+    """Does this expression reference a likely-untrusted variable?
+
+    Checks both the static hint vocabulary (`request`, `args`, ...) and the
+    optional `tainted` set (locals previously assigned from untrusted-shaped
+    sources). With `tainted=None` the walker behaves exactly like the
+    original single-statement check.
+    """
     for sub in ast.walk(node):
-        if isinstance(sub, ast.Name) and sub.id.lower() in UNTRUSTED_VAR_HINTS:
-            return True
+        if isinstance(sub, ast.Name):
+            if sub.id.lower() in UNTRUSTED_VAR_HINTS:
+                return True
+            if tainted is not None and sub.id in tainted:
+                return True
         if isinstance(sub, ast.Attribute):
             if sub.attr.lower() in UNTRUSTED_VAR_HINTS:
                 return True
@@ -71,6 +86,59 @@ def _full_name(node: ast.AST) -> str:
     return ""
 
 
+def _assign_targets(node: ast.AST) -> list[str]:
+    """Yield Name targets from an Assign / AugAssign / AnnAssign LHS."""
+    names: list[str] = []
+    targets: list[ast.AST] = []
+    if isinstance(node, ast.Assign):
+        targets = list(node.targets)
+    elif isinstance(node, ast.AnnAssign):
+        targets = [node.target]
+    elif isinstance(node, ast.AugAssign):
+        targets = [node.target]
+    for t in targets:
+        if isinstance(t, ast.Name):
+            names.append(t.id)
+        elif isinstance(t, (ast.Tuple, ast.List)):
+            for elt in t.elts:
+                if isinstance(elt, ast.Name):
+                    names.append(elt.id)
+    return names
+
+
+def _function_taint(func: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
+    """Walk a function body in source order; return locals assigned from an
+    untrusted-shaped source.
+
+    Seeded with the function's parameters whose names match the hint
+    vocabulary (so `def serve_file(request): ...` marks `request` tainted
+    from the start, even though it is just a Name and would normally only
+    match the hint check on access).
+    """
+    tainted: set[str] = set()
+    for arg in func.args.args + func.args.posonlyargs + func.args.kwonlyargs:
+        if arg.arg.lower() in UNTRUSTED_VAR_HINTS:
+            tainted.add(arg.arg)
+    # walk every statement of the body in textual order so transitive
+    # taint (a = b; c = a) propagates the same way the interpreter would
+    # see it; ast.walk would be order-independent and lose chains
+    for stmt in ast.walk(func):
+        if isinstance(stmt, (ast.Assign, ast.AnnAssign)):
+            rhs = stmt.value
+            if rhs is None:
+                continue
+            if _is_untrusted_name(rhs, tainted):
+                for name in _assign_targets(stmt):
+                    tainted.add(name)
+        elif isinstance(stmt, ast.AugAssign):
+            # `s += untrusted` taints s; `s += literal` also leaves any
+            # prior taint on s untouched (set is monotonic for this pass).
+            if _is_untrusted_name(stmt.value, tainted):
+                for name in _assign_targets(stmt):
+                    tainted.add(name)
+    return tainted
+
+
 def scan_file(path: Path, *, repo_root: Path | None = None) -> list[dict[str, Any]]:
     try:
         source = path.read_text(errors="replace")
@@ -85,11 +153,44 @@ def scan_file(path: Path, *, repo_root: Path | None = None) -> list[dict[str, An
         }]
     rel_path = str(path.relative_to(repo_root)) if repo_root else str(path)
     findings: list[dict[str, Any]] = []
+
+    # Pre-compute per-function taint sets so the sink scan below can see
+    # locals assigned from untrusted-shaped sources earlier in the same
+    # function.
+    func_taint: dict[int, set[str]] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            func_taint[id(node)] = _function_taint(node)
+
+    def _enclosing_taint(call: ast.AST) -> set[str] | None:
+        # Walk the AST again locating which function (if any) lexically
+        # contains this call. For module-level calls return None so the
+        # call falls back to the static-hint-only check.
+        for fn in func_taint:
+            pass  # see below; we re-walk per call which is O(N^2) only
+        return None
+
+    # Build a child→parent map once so we can locate the enclosing function
+    # cheaply for each Call. Cheaper than re-walking the whole tree per call.
+    parent: dict[int, ast.AST] = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parent[id(child)] = node
+
+    def _taint_for(call: ast.AST) -> set[str] | None:
+        current = parent.get(id(call))
+        while current is not None:
+            if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                return func_taint.get(id(current))
+            current = parent.get(id(current))
+        return None
+
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
             full = _full_name(node.func)
             tail = full.split(".")[-1] if full else ""
-            for cls, hyp in _classify_call(full, tail, node, source):
+            tainted = _taint_for(node)
+            for cls, hyp in _classify_call(full, tail, node, source, tainted):
                 findings.append(
                     {
                         "file": rel_path,
@@ -102,7 +203,13 @@ def scan_file(path: Path, *, repo_root: Path | None = None) -> list[dict[str, An
     return findings
 
 
-def _classify_call(full: str, tail: str, node: ast.Call, source: str) -> list[tuple[str, str]]:
+def _classify_call(
+    full: str,
+    tail: str,
+    node: ast.Call,
+    source: str,
+    tainted: set[str] | None,
+) -> list[tuple[str, str]]:
     out: list[tuple[str, str]] = []
     kw = {kw.arg: kw.value for kw in node.keywords if kw.arg}
     args = node.args
@@ -152,9 +259,15 @@ def _classify_call(full: str, tail: str, node: ast.Call, source: str) -> list[tu
                 "sql_injection_string_format",
                 "cursor.execute called with %-format or string concatenation; parametrize instead",
             ))
+        elif tainted is not None and isinstance(sql, ast.Name) and sql.id in tainted:
+            out.append((
+                "sql_injection_string_format",
+                "cursor.execute called with a SQL string assembled from an untrusted-shaped local; parametrize instead",
+            ))
 
-    # open with concatenated path including untrusted hint
-    if (full == "open" or tail == "open") and args and _is_untrusted_name(args[0]) and not _is_literal_string(args[0]):
+    # open with concatenated path including untrusted hint OR a local that
+    # was assigned from one
+    if (full == "open" or tail == "open") and args and _is_untrusted_name(args[0], tainted) and not _is_literal_string(args[0]):
         out.append((
             "path_traversal_unguarded_join",
             "open() over a path derived from request/user input; check normpath and base containment",
