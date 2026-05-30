@@ -1,7 +1,7 @@
 # Harness Orchestration Framework — Orient the Model, Don't Hope
 
 Date: 2026-05-29
-Status: Phase A + B landed 2026-05-29 (see section 9); Phase C pending
+Status: Phase A + B + C all landed 2026-05-29 (commit 714bce6; see section 9)
 Author: operator + Claude
 
 ## 1. The problem this fixes
@@ -199,10 +199,12 @@ instead of being surprised by them.
   `state.intent.threat_model` from a 6-token `INTENT_VOCAB`; `hypothesize` orders
   matching-kind hypotheses first (survive --max cap), `score` adds bounded +5 to
   aligned candidates. Never suppresses off-intent findings.
-- **Phase C — close the outcome loop. [PENDING]** Auto-emit structured outcomes on
-  every transition; wire FP/defended taxonomy (guard reasons) into
-  `score-tune`/`outcome-tune`. Note: Phase A already emits per-step outcomes to
-  `step_outcomes.jsonl` — Phase C consumes them for tuning.
+- **Phase C — close the outcome loop. [DONE 2026-05-29]** Triage verdicts
+  (fp/defended down-weight, needs_proof up-weight) fold into `outcome_tuning`
+  weakness adjustments and flow through `_score_candidate`, even with zero
+  submissions. Verified by FP smoke: fp-heavy CWE-89 -> adj -5.0 -> candidate
+  score 4->3. Phase A already emits per-step outcomes to `step_outcomes.jsonl`;
+  Phase C consumes them for tuning.
 
 ## 10. Validation
 
