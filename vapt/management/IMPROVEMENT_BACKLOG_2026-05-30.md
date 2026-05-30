@@ -181,25 +181,27 @@ batch at a time, snapshotting all `*-check` outputs before/after each batch:
   `__main__` block hands off to `cli.main()`. Verification gate green:
   65 tests, loop-integrity / intent-ordering byte-identical to baseline,
   phase3 / phase4 / outcome-tune rc=0, `--version` unchanged.
-- Batch 11: `ledger/commands.py` (9 cmd_* handlers for the ledger surface —
-  `cmd_corpus_rebuild`, `cmd_submission_add`, `cmd_submission_update`,
-  `cmd_submission_seed_synthetic`, `cmd_outcome_record`,
-  `cmd_submissions_list`, `cmd_outcome_tune`, `cmd_weights_show`,
-  `cmd_submissions_stats`). Uses the same dual sys.modules `_h` lookup as
-  cli.py to reach the still-in-harness helpers (`_h.load_run`,
-  `_h._synthetic_status_for`, `_h._synthetic_module_for`,
-  `_h._synthetic_evidence_kind`). The `outcome_tuning` math and
-  `load_outcome_tuning` re-imports are preserved at the original harness
-  call sites so `_score_campaign_module` and the outcome-tune unit tests
-  still resolve. Verification gate green: 77 tests, loop-integrity /
-  intent-ordering byte-identical to baseline, phase3 / phase4 /
-  outcome-tune rc=0, `weights show` rc=0.
+- Batch 11: `ledger/commands.py` (9 ledger cmd_* handlers). Verification
+  gate green.
+- Batch 12: `campaign/commands.py` (23 campaign-lifecycle handlers + helpers
+  — `cmd_candidate_link_campaign`, `cmd_campaign_start`,
+  `cmd_campaign_flow_check`, `cmd_campaign_plan`, `cmd_campaign_adapter_check`,
+  `cmd_campaign_dashboard`, `cmd_campaign_run`, `cmd_campaign_gate` plus the
+  `_campaign_*` render / refresh / history / score helpers). Uses dual
+  sys.modules `_h` lookup for the 27 still-in-harness helpers
+  (`_h.load_run`, `_h._target_*`, `_h._adapter_*`, `_h.run_cmd`,
+  `_h.load_mutation_catalog`, `_h.poll_watch_source`, etc.). Built via an
+  AST-aware extractor that prefixes harness-internal references through
+  `ast.NodeTransformer` (avoids the regex-inside-string class of bugs
+  that batch 11 hit when a name like `name` collided with dict-key
+  literals). Verification gate green: 77 tests, loop-integrity /
+  intent-ordering byte-identical, phase3 / phase4 / outcome-tune /
+  campaign-flow-check rc=0.
 - harness.py: 13,001 → 12,487 → 12,339 → 12,058 → 11,913 → 11,839 → 11,799
-  → 11,788 → 10,823 → **10,404** lines. T3.2 structural move complete;
-  per-domain cmd_* extraction now under way (batch 11 is the first such
-  domain move). Module acceptance (`no module > 1500 lines`) still not
-  met; remaining clusters: campaign, watch polling, source AST, scanner
-  commands, candidate workflow.
+  → 11,788 → 10,823 → 10,404 → **9,164** lines. Module acceptance
+  (`no module > 1500 lines`) still not met; remaining cmd_* clusters
+  to extract: watch polling + advisory, source AST, scanner commands,
+  candidate workflow.
 
 ### Tier 4 — Ergonomics, Honesty, Packaging
 
