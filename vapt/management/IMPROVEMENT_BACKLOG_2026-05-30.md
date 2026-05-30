@@ -169,12 +169,26 @@ batch at a time, snapshotting all `*-check` outputs before/after each batch:
   CLI handlers stay in harness.py (CLI dispatcher batch). Verification gate
   green.
 - Batch 9: `source/targets.py` (engagement target profile lookup —
-  `_target_profile_paths`, `_load_target_profile`). Path-by-stem fast path
-  and id-field fallback preserved. Verification gate green: 65 tests,
-  loop-integrity / intent-ordering byte-identical to baseline, phase3 /
-  phase4 / outcome-tune rc=0.
+  `_target_profile_paths`, `_load_target_profile`). Verification gate green.
+- Batch 10: `cli.py` (CLI dispatcher — `build_parser` + `main`, ~980 lines
+  of argparse construction, 116 `_h.cmd_*` references, 1 `_h.INTENT_VOCAB`).
+  `cli.py` uses a dual `sys.modules` lookup so the `_h` alias resolves under
+  both `python harness.py` (loaded as `__main__`) and `import harness` (tests,
+  campaign-adapter subprocess). harness.py keeps a 4-line `build_parser` shim
+  that lazy-imports from cli to break the circular at import time; the four
+  cmd_* call sites that materialize the parser at runtime (phase3-check etc.)
+  resolve through the shim. harness.py becomes a thin entrypoint whose
+  `__main__` block hands off to `cli.main()`. Verification gate green:
+  65 tests, loop-integrity / intent-ordering byte-identical to baseline,
+  phase3 / phase4 / outcome-tune rc=0, `--version` unchanged.
 - harness.py: 13,001 → 12,487 → 12,339 → 12,058 → 11,913 → 11,839 → 11,799
-  → **11,788** lines. Next batch: CLI dispatcher (the final structural move).
+  → 11,788 → **10,823** lines. T3.2 structural move complete. Module
+  acceptance (`no module > 1500 lines`) is NOT yet met — harness.py at
+  10,823 lines still holds the cmd_* handlers and the bulk of domain
+  logic. The strangler-fig foundation is in place; the remaining work is
+  per-domain extraction of the cmd_* layers (campaign lifecycle, watch
+  polling, source AST integration, dashboards, reports) into their
+  respective packages over subsequent batches.
 
 ### Tier 4 — Ergonomics, Honesty, Packaging
 
