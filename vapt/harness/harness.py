@@ -718,75 +718,15 @@ def cmd_surfaces_test(args: argparse.Namespace) -> None:
         raise SystemExit(2)
 
 
-DEFAULT_CANDIDATE = {
-    "id": "",
-    "title": "",
-    "status": "candidate",
-    "surface": "",
-    "weakness": "",
-    "impact": "",
-    "attacker_control": "",
-    "entrypoint": "",
-    "trust_boundary": "",
-    "latest_affected": "unchecked",
-    "sink": "",
-    "triage_verdict": "",
-    "novelty": "unchecked",
-    "dedup": {"status": "unchecked", "matches": [], "checked_at": ""},
-    "proof": "not_started",
-    "cve": "N/A",
-    "cwe": "",
-    "cvss": "",
-    "framework_mappings": {},
-    "negative_controls": "",
-    "safety_notes": "",
-    "reference_sources": "",
-    "root_cause": "",
-    "variant_analysis": "",
-    "patch_diff": "",
-    "evidence_kind": "",
-    "queue_id": "",
-    "queue_entry": "",
-    "queue_evidence": {},
-    "campaign_run": "",
-    "campaign_gate": "",
-    "campaign_module": "",
-    "campaign_evidence": {},
-    "exploitability": "",
-    "disclosure_quality": "",
-    "created_at": "",
-    "notes": "",
-    "history": [],
-}
-
-
-def _normalize_candidate(cand: dict[str, Any]) -> dict[str, Any]:
-    normalized = {**DEFAULT_CANDIDATE, **(cand or {})}
-    normalized["schema_version"] = int(normalized.get("schema_version") or CURRENT_CANDIDATE_SCHEMA_VERSION)
-    if not isinstance(normalized.get("history"), list):
-        normalized["history"] = []
-    if not isinstance(normalized.get("dedup"), dict):
-        normalized["dedup"] = DEFAULT_CANDIDATE["dedup"].copy()
-    if not isinstance(normalized.get("framework_mappings"), dict):
-        normalized["framework_mappings"] = {}
-    if not isinstance(normalized.get("campaign_evidence"), dict):
-        normalized["campaign_evidence"] = {}
-    if not isinstance(normalized.get("queue_evidence"), dict):
-        normalized["queue_evidence"] = {}
-    return normalized
-
-
-def load_candidates(run_dir: Path) -> dict[str, Any]:
-    path = run_dir / "candidates.yaml"
-    data = load_yaml(path) if path.exists() else {"candidates": []}
-    data = data or {"candidates": []}
-    data.setdefault("schema_version", CURRENT_CANDIDATE_SCHEMA_VERSION)
-    data["candidates"] = [_normalize_candidate(cand) for cand in data.get("candidates", [])]
-    return data
-
-
-def save_candidates(run_dir: Path, data: dict[str, Any]) -> None:
-    dump_yaml(data, run_dir / "candidates.yaml")
+# Candidate ledger primitives (DEFAULT_CANDIDATE shape, normalization, the
+# locked YAML store, and id allocation) live in ledger/candidates.py. Imported
+# here so harness.* references resolve unchanged.
+from ledger.candidates import (  # noqa: E402
+    DEFAULT_CANDIDATE,
+    _normalize_candidate,
+    load_candidates,
+    save_candidates,
+)
 
 
 def find_campaign_context(run_dir: Path, explicit_campaign_dir: str | None = None) -> dict[str, Any]:
@@ -1005,15 +945,8 @@ def candidate_from_queue_entry(
     return cand
 
 
-def next_candidate_id(data: dict[str, Any]) -> str:
-    max_id = 0
-    for cand in data.get("candidates", []):
-        raw = str(cand.get("id", "CAND-000")).removeprefix("CAND-")
-        try:
-            max_id = max(max_id, int(raw))
-        except ValueError:
-            pass
-    return f"CAND-{max_id + 1:03d}"
+# next_candidate_id moved to ledger/candidates.py.
+from ledger.candidates import next_candidate_id  # noqa: E402
 
 
 def cmd_candidate_add(args: argparse.Namespace) -> None:
@@ -1701,20 +1634,8 @@ def cmd_gate(args: argparse.Namespace) -> None:
         raise SystemExit(2)
 
 
-def find_candidate(data: dict[str, Any], cand_id: str) -> dict[str, Any]:
-    for cand in data.get("candidates", []):
-        if cand.get("id") == cand_id:
-            return cand
-    raise SystemExit(f"candidate not found: {cand_id}")
-
-
-def update_candidate_locked(run_dir: Path, cand_id: str, updater) -> dict[str, Any]:
-    with candidate_ledger_lock(run_dir):
-        data = load_candidates(run_dir)
-        cand = find_candidate(data, cand_id)
-        updater(cand)
-        save_candidates(run_dir, data)
-        return cand
+# find_candidate / update_candidate_locked moved to ledger/candidates.py.
+from ledger.candidates import find_candidate, update_candidate_locked  # noqa: E402
 
 
 def cmd_candidate_link_campaign(args: argparse.Namespace) -> None:
@@ -5267,18 +5188,8 @@ def cmd_next_action(args: argparse.Namespace) -> None:
 # step_outcomes_path imported from core.
 
 
-def _append_step_outcome(row: dict[str, Any]) -> str:
-    path = step_outcomes_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    outcome_id = row.get("outcome_id") or (
-        f"SO-{dt.datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:6]}"
-    )
-    row["outcome_id"] = outcome_id
-    row.setdefault("recorded_at", dt.datetime.now().isoformat(timespec="seconds"))
-    with file_lock(path):
-        with path.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(row, sort_keys=True) + "\n")
-    return outcome_id
+# _append_step_outcome moved to ledger/outcomes.py.
+from ledger.outcomes import _append_step_outcome  # noqa: E402
 
 
 def _recommendation_verb(rec: dict[str, Any]) -> str:
@@ -5951,26 +5862,8 @@ def cmd_corpus_rebuild(args: argparse.Namespace) -> None:
 from validators import submission_positive, submission_terminal  # noqa: E402
 
 
-def candidate_outcome_metadata(target: dict[str, Any], cand: dict[str, Any]) -> dict[str, Any]:
-    queue_evidence = cand.get("queue_evidence") if isinstance(cand.get("queue_evidence"), dict) else {}
-    return {
-        "target_id": target.get("id") or "",
-        "target_category": target.get("category") or [],
-        "language": target.get("language") or [],
-        "weakness": cand.get("weakness") or "",
-        "cwe": cand.get("cwe") or "",
-        "surface": cand.get("surface") or "",
-        "sink": cand.get("sink") or "",
-        "campaign_module": cand.get("campaign_module") or "",
-        "evidence_kind": cand.get("evidence_kind") or "",
-        "queue_type": queue_evidence.get("queue_type") or "",
-    }
-
-
-def enrich_submission_entry(entry: dict[str, Any], target: dict[str, Any], cand: dict[str, Any]) -> dict[str, Any]:
-    enriched = {**entry, **candidate_outcome_metadata(target, cand)}
-    enriched.setdefault("harness_version", HARNESS_VERSION)
-    return enriched
+# candidate_outcome_metadata / enrich_submission_entry moved to ledger/submissions.py.
+from ledger.submissions import candidate_outcome_metadata, enrich_submission_entry  # noqa: E402
 
 
 def cmd_submission_add(args: argparse.Namespace) -> None:
@@ -6532,46 +6425,8 @@ def cmd_submissions_list(args: argparse.Namespace) -> None:
             )
 
 
-def submission_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    by_program: dict[str, dict[str, Any]] = {}
-    for row in rows:
-        program = str(row.get("program") or "<unknown>")
-        bucket = by_program.setdefault(
-            program,
-            {
-                "total": 0,
-                "terminal": 0,
-                "positive": 0,
-                "duplicates": 0,
-                "payout_total": 0.0,
-                "payout_count": 0,
-                "days_to_final_total": 0,
-                "days_to_final_count": 0,
-            },
-        )
-        bucket["total"] += 1
-        final = str(row.get("final_status") or "")
-        if final:
-            bucket["terminal"] += 1
-        if submission_positive(final):
-            bucket["positive"] += 1
-        if final == "duplicate":
-            bucket["duplicates"] += 1
-        if row.get("payout_value") is not None:
-            bucket["payout_total"] += float(row.get("payout_value") or 0)
-            bucket["payout_count"] += 1
-        if row.get("days_to_final") is not None:
-            bucket["days_to_final_total"] += int(row.get("days_to_final") or 0)
-            bucket["days_to_final_count"] += 1
-    for bucket in by_program.values():
-        total = bucket["total"] or 1
-        terminal = bucket["terminal"] or 1
-        bucket["acceptance_rate"] = round(bucket["positive"] / terminal, 3)
-        bucket["duplicate_rate"] = round(bucket["duplicates"] / terminal, 3)
-        bucket["average_value"] = round(bucket["payout_total"] / (bucket["payout_count"] or 1), 2)
-        bucket["average_days_to_final"] = round(bucket["days_to_final_total"] / (bucket["days_to_final_count"] or 1), 2)
-        bucket["open"] = total - bucket["terminal"]
-    return {"programs": by_program, "total_submissions": len(rows)}
+# submission_stats moved to ledger/submissions.py.
+from ledger.submissions import submission_stats  # noqa: E402
 
 
 # _stat_bucket/_add_outcome/_finalize_outcome_bucket imported from outcome_tuning.
@@ -6589,11 +6444,8 @@ from outcome_tuning import (  # noqa: E402
 )
 
 
-def load_outcome_tuning() -> dict[str, Any]:
-    path = outcome_tuning_path()
-    if not path.exists():
-        return {}
-    return load_yaml(path) or {}
+# load_outcome_tuning moved to ledger/submissions.py.
+from ledger.submissions import load_outcome_tuning  # noqa: E402
 
 
 def cmd_outcome_tune(args: argparse.Namespace) -> None:

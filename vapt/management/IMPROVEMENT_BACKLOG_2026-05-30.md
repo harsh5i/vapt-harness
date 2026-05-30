@@ -1,7 +1,7 @@
 # VAPT Harness — Improvement Backlog & Execution Plan
 
 Date: 2026-05-30
-Status: ACTIVE — Tier 1 + Tier 2 done; Tier 3 (tests-first, then decompose) next
+Status: ACTIVE — Tier 1 + Tier 2 done; Tier 3.1 done; Tier 3.2 in progress (decomposition underway)
 Author: operator + Claude
 Inputs: independent reviews from ChatGPT and Grok (2026-05-30), reconciled against
 verified repo state.
@@ -104,6 +104,12 @@ cache failure does not fake novelty; out-of-scope rejected pre-execution; active
 scanner refuses without ROE; atomic JSON/YAML writes.
 - Acceptance: ≥50 unit tests green; every gate and every state-transition function
   has a unit test; `pytest vapt/harness/tests/` runs clean.
+- **[DONE 2026-05-30]** 65 unit tests green (commit `fed43a4`, pushed): validators,
+  promotion/workflow gates, outcome-tuning honesty, atomic IO, dedup/novelty,
+  authorization scope. PyYAML was missing from `.venv-vapt` and broke the import —
+  installed. Golden baseline captured for the `*-check` battery
+  (loop-integrity / intent-ordering / outcome-tune / phase3 / phase4 all green;
+  phase2-check is environment-gated on cloned engagement source).
 
 **T3.2 — Strangler-fig decomposition.**
 Only after T3.1. Extract in dependency order into the existing stub packages, one
@@ -120,6 +126,31 @@ batch at a time, snapshotting all `*-check` outputs before/after each batch:
 - Rule: **no CLI name, JSON shape, file format, or run-dir convention changes.**
 - Acceptance: no module > 1500 lines; `harness.py` is a compatibility wrapper;
   all `*-check` pass identically before and after every batch.
+
+**T3.2 progress log (2026-05-30):**
+- Finding: the pre-existing `campaign/ gates/ ledger/ watch/ mutation/ tools/ source/`
+  packages were **parallel dead code** — `harness.py` imported nothing from them, so
+  the real 13,001-line monolith was untouched. Doing real extractions and importing
+  them back so every `harness.*` reference resolves unchanged.
+- Verification gate per batch: 65 unit tests green + `loop-integrity-check` and
+  `intent-ordering-check` stdout **byte-identical** to the pre-refactor baseline +
+  outcome-tune/phase3/phase4 pass.
+- Batch 1 (`a63c65d`): `atomic_io.py` (locks + atomic JSON/YAML/JSONL) + `validators.py`
+  (CWE/CVSS/substantive/affected-version + submission predicates).
+- Batch 2 (`07970d6`): `core.py` foundation (ROOT, version, `TRIAGE_VERDICTS`,
+  `rel`/`run_path`/`source_path`/`now_id` + corpus paths) + `outcome_tuning.py`
+  (terminal-outcome + triage-verdict folding math).
+- Batch 3 (`1138696`, pushed): `gates/promotion.py` (promotion_findings,
+  workflow_blockers, dedup_checked, campaign/queue evidence checks).
+- Batch 4: `ledger/candidates.py` (DEFAULT_CANDIDATE shape, `_normalize_candidate`,
+  `load_candidates`/`save_candidates`, `find_candidate`,
+  `update_candidate_locked`, `next_candidate_id`) + `ledger/submissions.py`
+  (`submission_stats`, `candidate_outcome_metadata`, `enrich_submission_entry`,
+  `load_outcome_tuning`) + `ledger/outcomes.py` (`_append_step_outcome`).
+  Verification gate green: 65 tests, loop-integrity / intent-ordering
+  byte-identical to baseline, phase3 / phase4 / outcome-tune rc=0.
+- harness.py: 13,001 → 12,487 → **12,339** lines. Next batches up the order:
+  osv/dedup, tool wrappers, watch, campaign, source, then CLI dispatcher.
 
 ### Tier 4 — Ergonomics, Honesty, Packaging
 
