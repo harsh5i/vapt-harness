@@ -9954,10 +9954,42 @@ def _load_tool_module(name: str) -> Any:
     return importlib.import_module(f"tools.{name}")
 
 
+def _authorize_scan(run_dir: Path, target_url: str | None, scanner: str) -> None:
+    """Fail-closed scope + ROE gate. Refuses before any scanner subprocess runs.
+
+    Loads the run's target profile and delegates to gates.authorization. On deny
+    a structured JSON refusal record is written under the run's logs and the
+    command exits non-zero without spawning the scanner.
+    """
+    sys.path.insert(0, str(ROOT / "vapt" / "harness"))
+    from gates.authorization import authorize, AuthorizationError
+
+    _state, target = load_run(run_dir)
+    try:
+        authorize(run_dir, target, target_url, scanner)
+    except AuthorizationError as exc:
+        print(json.dumps({"authorization": "denied", **exc.record}, indent=2))
+        raise SystemExit(2)
+
+
+def cmd_scope_check(args: argparse.Namespace) -> None:
+    """Dry-run the scope/ROE gate without executing any scanner."""
+    sys.path.insert(0, str(ROOT / "vapt" / "harness"))
+    from gates.authorization import evaluate
+
+    run_dir = run_path(args.run_dir)
+    _state, target = load_run(run_dir)
+    record = evaluate(target, args.target_url, args.scanner)
+    print(json.dumps(record, indent=2))
+    if record["decision"] != "allow":
+        raise SystemExit(2)
+
+
 def cmd_scan_zap_baseline(args: argparse.Namespace) -> None:
     zap_mod = _load_tool_module("zap")
 
     run_dir = run_path(args.run_dir)
+    _authorize_scan(run_dir, args.target_url, "zap-baseline")
     base = tool_scan_base(run_dir, "zap-baseline")
     out_dir = base.parent
     runtime, _ = _ensure_runtime_or_local(
@@ -9985,6 +10017,7 @@ def cmd_scan_zap_full(args: argparse.Namespace) -> None:
     zap_mod = _load_tool_module("zap")
 
     run_dir = run_path(args.run_dir)
+    _authorize_scan(run_dir, args.target_url, "zap-full")
     base = tool_scan_base(run_dir, "zap-full")
     out_dir = base.parent
     runtime, _ = _ensure_runtime_or_local(
@@ -10012,6 +10045,7 @@ def cmd_scan_sqlmap(args: argparse.Namespace) -> None:
     sqlmap_mod = _load_tool_module("sqlmap")
 
     run_dir = run_path(args.run_dir)
+    _authorize_scan(run_dir, args.target_url, "sqlmap")
     base = tool_scan_base(run_dir, "sqlmap")
     out_dir = base.parent
     runtime, local_bin = _ensure_runtime_or_local(
@@ -10071,6 +10105,7 @@ def cmd_scan_screenshot(args: argparse.Namespace) -> None:
     shot_mod = _load_tool_module("screenshot")
 
     run_dir = run_path(args.run_dir)
+    _authorize_scan(run_dir, args.target_url, "screenshot")
     base = tool_scan_base(run_dir, "screenshot")
     out_dir = base.parent
     runtime, local_bin = _ensure_runtime_or_local(
@@ -12372,6 +12407,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--network", default="bridge")
     p.add_argument("--timeout", type=int, default=120)
     p.set_defaults(func=cmd_scan_screenshot)
+
+    p = sub.add_parser("scope-check", help="dry-run the fail-closed scope/ROE gate for a target_url without scanning")
+    p.add_argument("run_dir")
+    p.add_argument("target_url")
+    p.add_argument("--scanner", default="zap-full", help="scanner name to evaluate (active scanners require active_scan_allowed)")
+    p.set_defaults(func=cmd_scope_check)
 
     p = sub.add_parser("tools-capability", help="report Move 3 toolchain availability (container or local)")
     p.add_argument("--json", action="store_true")

@@ -158,6 +158,20 @@ batch at a time, snapshotting all `*-check` outputs before/after each batch:
 ## 5. Progress log
 
 - 2026-05-30 — Plan authored. Tier 1 started.
+- 2026-05-30 — **T1.1 done.** `STATUS.md` added (single source of truth);
+  `README.md` headline + capability table reconciled to it (dropped "autonomous"
+  framing). Committed 0fb75d9.
+- 2026-05-30 — **T1.2 done.** `gates/authorization.py` (stdlib-only, fail-closed
+  scope + ROE gate); wired into `scan-zap-baseline/zap-full/sqlmap/screenshot`;
+  added `scope-check` dry-run command; 13 unit tests (first pytest suite). E2E
+  verified: undeclared scope and out-of-scope refuse without spawning a scanner;
+  active scanners refuse without `active_scan_allowed`; deny records written under
+  `<run_dir>/logs/authorizations/`. ONBOARDING updated with the new contract.
+- 2026-05-30 — Found (not caused by this work): `outcome-tune-check` is **not
+  hermetic** — it depends on `phase4-check` having run first to generate
+  `tests/results/phase4_check_repo`, else it dies in `advisory_patch_enrichment`
+  on a `git rev-parse` against a missing dir. Fails identically on clean HEAD.
+  Fold into T3.1 (tests must be self-contained).
 
 ## 6. Parked: pre-public-release checklist (not current work)
 

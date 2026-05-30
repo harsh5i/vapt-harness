@@ -249,6 +249,21 @@ harness scan-zap-baseline <run_dir> <url>               # Move 3 (needs Docker)
 harness scan-sqlmap <run_dir> --target-url "<url>"      # Move 3 (needs Docker)
 ```
 
+**Scope/ROE gate (fail-closed).** Network scanners (`scan-zap-baseline`,
+`scan-zap-full`, `scan-sqlmap`, `scan-screenshot`) refuse to run unless the
+run's `target.yaml` declares the target host in `scope_hosts`. Active scanners
+(ZAP, sqlmap) additionally require `active_scan_allowed: true`. An undeclared
+scope is a refusal, not a default-allow. Preview a decision without scanning:
+
+```
+harness scope-check <run_dir> <url> --scanner zap-full
+```
+
+A denial writes a structured record under `<run_dir>/logs/authorizations/` and
+exits non-zero. Target-profile fields: `scope_hosts` (required for any network
+scan), `out_of_scope_hosts` (optional deny list, wins over scope), and
+`active_scan_allowed` (required true for active scanners).
+
 After producing evidence, attach it to the candidate via the
 candidate ledger; the gates inspect candidate fields, not free-floating
 files.
