@@ -4,16 +4,45 @@ Extracted leaf layer of the harness: no dependencies on the rest of the
 harness, only the stdlib. Every write goes through a temp file + os.replace so
 a crash mid-write can never leave a half-written ledger. read_jsonl tolerates
 blank/corrupt lines; read_json returns a caller-supplied default when missing.
+
+The lock primitives auto-select between stdlib fcntl (Unix/macOS) and stdlib
+msvcrt.locking (Windows). On Windows fcntl is unavailable so importing it at
+module top would crash the harness on first import; the dispatch table below
+keeps the same `file_lock(path)` / `candidate_ledger_lock(run_dir)` surface
+on both platforms without any caller change.
 """
 from __future__ import annotations
 
 import contextlib
-import fcntl
 import json
 import os
+import sys
 import uuid
 from pathlib import Path
 from typing import Any
+
+
+if sys.platform == "win32":  # pragma: no cover - Windows-only path
+    import msvcrt
+
+    def _lock_exclusive(fh) -> None:
+        # Lock the first byte for the lifetime of the file handle; this is the
+        # canonical msvcrt advisory-lock idiom and is enough for the harness's
+        # one-writer / many-readers ledger pattern.
+        msvcrt.locking(fh.fileno(), msvcrt.LK_LOCK, 1)
+
+    def _lock_release(fh) -> None:
+        with contextlib.suppress(OSError):
+            fh.seek(0)
+            msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+else:
+    import fcntl
+
+    def _lock_exclusive(fh) -> None:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+
+    def _lock_release(fh) -> None:
+        fcntl.flock(fh, fcntl.LOCK_UN)
 
 
 @contextlib.contextmanager
@@ -21,11 +50,11 @@ def candidate_ledger_lock(run_dir: Path):
     lock_path = run_dir / "candidates.yaml.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with lock_path.open("w", encoding="utf-8") as fh:
-        fcntl.flock(fh, fcntl.LOCK_EX)
+        _lock_exclusive(fh)
         try:
             yield
         finally:
-            fcntl.flock(fh, fcntl.LOCK_UN)
+            _lock_release(fh)
 
 
 @contextlib.contextmanager
@@ -33,11 +62,11 @@ def file_lock(path: Path):
     lock_path = path.with_suffix(path.suffix + ".lock")
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with lock_path.open("w", encoding="utf-8") as fh:
-        fcntl.flock(fh, fcntl.LOCK_EX)
+        _lock_exclusive(fh)
         try:
             yield
         finally:
-            fcntl.flock(fh, fcntl.LOCK_UN)
+            _lock_release(fh)
 
 
 def _yaml():

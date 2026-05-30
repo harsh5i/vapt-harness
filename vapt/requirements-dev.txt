@@ -1,0 +1,6 @@
+# Developer profile: tests + pre-commit. Layered on top of vapt/requirements.txt.
+# Install: pip install -r vapt/requirements.txt -r vapt/requirements-dev.txt
+-r requirements.txt
+pytest>=7.0
+pre-commit>=3.0
+detect-secrets>=1.5

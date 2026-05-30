@@ -205,6 +205,14 @@ batch at a time, snapshotting all `*-check` outputs before/after each batch:
   `pyproject.toml`. Cross-platform file-lock abstraction (`fcntl` / `portalocker`
   fallback) so import doesn't crash on Windows; document Linux/macOS + Windows
   setup.
+  **[PARTIAL 2026-05-30]** Stdlib-only lock abstraction landed in
+  `atomic_io.py`: `_lock_exclusive` / `_lock_release` dispatch to `fcntl` on
+  Unix/macOS and `msvcrt.locking` on Windows. No portalocker dependency
+  required. Dev profile added (`vapt/requirements-dev.txt`) bundling pytest +
+  pre-commit + detect-secrets on top of the existing core (`vapt/requirements.txt`,
+  PyYAML only) and tools (`vapt/env/requirements-vapt.txt`, scanner toolchain)
+  profiles. Verification gate green: 65 tests + byte-identical loop-integrity
+  + phase3/phase4 rc=0 on macOS; Windows CI still pending.
 - **T4.5** Sensitive-data pre-commit (gitleaks / detect-secrets + engagement-path
   regex); keep `vapt/engagements/*/` ignored; synthetic fixtures allowed.
   **[DONE 2026-05-30]** Added `.pre-commit-config.yaml` (local

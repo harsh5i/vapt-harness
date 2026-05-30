@@ -69,7 +69,7 @@ subprocess).
 | Package decomposition | partial | stub packages exist (`campaign/ gates/ ledger/ watch/ mutation/ tools/ source/`), each `__init__.py` only | `git ls-files vapt/harness/<pkg>` | Logic still in 12,885-line `harness.py`. T3.2 (tests-first). |
 | Unit tests | partial | first pytest suite landed: `test_authorization_scope.py` (13 tests) | `./.venv-vapt/bin/python -m pytest vapt/harness/tests/` | Only the authz gate is covered. T3.1 — extend to ledger/gates/transitions, ≥50 tests. |
 | Sensitive-data pre-commit | implemented | `.pre-commit-config.yaml` + `scripts/check_engagement_paths.py` + `.secrets.baseline` (detect-secrets) | `pre-commit install && pre-commit run --all-files` | Opt-in install per clone. Engagement-path guard is fail-closed on any staged file under `vapt/engagements/<id>/`. |
-| Cross-platform support | partial | uses `fcntl` (Unix) for file locks | — | Crashes on Windows import; no lock abstraction. T4.4. |
+| Cross-platform support | partial | `atomic_io.py` dispatches `fcntl` on Unix/macOS and `msvcrt.locking` on Windows for the same `file_lock` / `candidate_ledger_lock` surface; `vapt/requirements-dev.txt` added | `python3 -c "import sys; sys.path.insert(0,'vapt/harness'); import atomic_io"` | Lock abstraction landed; full Windows CI still pending. |
 
 ## Honest capability framing (supersedes README until T4.2)
 
