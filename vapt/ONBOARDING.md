@@ -8,6 +8,14 @@ running any command. If you are resuming a prior engagement, also read
 the run directory's `prepare.json` and the most recent candidate
 ledger before acting.
 
+**Working-tree only.** Verify everything in this session from files
+you read now. If you have prior memory of this repository - past
+engagements, candidate IDs, target names, conversations about this
+harness - do not cite or act on it. Treat such memory as unverified
+hearsay until you have re-opened the relevant file in this session.
+Memory drift is how operators jump to wrong targets and resurrect
+stale state.
+
 This guide unifies and points at three existing surfaces:
 
 - `/STATUS.md` - capability truth (single source of what is implemented
@@ -102,6 +110,30 @@ From the output you derive:
 
 Never assume the toolchain or scope from prior sessions. Always
 re-derive from the live filesystem.
+
+### 2.1 Stop after orientation and hand off
+
+When the cold-start sequence above is complete, **stop**. Do not
+declare or act on any target. Even if exactly one target profile is
+present, even if a run directory looks abandoned, even if memory or
+prior context suggests an obvious next move - wait for the human
+operator to name the target.
+
+Report onboarding completion in this exact shape so the operator
+knows you have read this file and stopped at the correct point:
+
+```
+Onboarded.
+- Harness: <git short SHA>
+- Tests: <pytest pass count>/<total> passing
+- Tools ready: <comma-separated tool list from tools-capability>
+- Engagements declared: <comma-separated engagement IDs, or "none">
+- Awaiting target.
+```
+
+Then wait. Do not run `discovery-sweep`, do not open a candidate
+ledger, do not pick a target. Authorization comes from the operator,
+not from the filesystem.
 
 ---
 
