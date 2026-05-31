@@ -90,8 +90,9 @@ _h discovery-list
 _h discovery-claim <proposal_id>
 ```
 
-`source-probe` AST walker is currently single-statement (T4.3). Probes only
-run after operator claim.
+`source-probe` AST walker supports intra-function taint flow (T4.3). It does
+not yet support cross-function flow, deep attribute taint, or call-site
+aliasing. Probes only run after operator claim.
 
 ## Campaigns
 

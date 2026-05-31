@@ -54,10 +54,10 @@ subprocess).
 
 | Capability | Status | Evidence | Validation command | Known gaps / next |
 |---|---|---|---|---|
-| ZAP wrapper | partial | `cmd_scan_zap_baseline` :9957, `cmd_scan_zap_full` :9984 | `python3 vapt/harness/harness.py tools-capability --json` | **No ROE gate** — runs without `active_scan_allowed`. Fix in T1.2. Docker-gated. |
-| sqlmap wrapper | partial | `cmd_scan_sqlmap` :10011 | `tools-capability --json` | Same: ungated active scanner. |
-| JWT tooling | partial | `cmd_scan_jwt` :10046 | `tools-capability --json` | Same. |
-| Playwright screenshot | partial | `cmd_scan_screenshot` :10070 | `tools-capability --json` | Container-first; binary fallback. |
+| ZAP wrapper | partial | `cmd_scan_zap_baseline`, `cmd_scan_zap_full` in `tools/commands.py`; ROE-gated via `_authorize_scan` (`gates/authorization.py`) — requires `active_scan_allowed: true` for full-scan and rejects out-of-scope targets fail-closed before any subprocess | `python3 vapt/harness/harness.py tools-capability --json` ; `scope-check <run_dir> <url> --scanner zap-full` | Docker-gated; real-target validation pending. |
+| sqlmap wrapper | partial | `cmd_scan_sqlmap` in `tools/commands.py`; ROE-gated via `_authorize_scan` | `tools-capability --json` ; `scope-check <run_dir> <url> --scanner sqlmap` | Docker-gated; real-target validation pending. |
+| JWT tooling | partial | `cmd_scan_jwt` in `tools/commands.py`; ROE-gated via `_authorize_scan` | `tools-capability --json` ; `scope-check <run_dir> <url> --scanner jwt` | Docker-gated; real-target validation pending. |
+| Playwright screenshot | partial | `cmd_scan_screenshot` in `tools/commands.py`; ROE-gated via `_authorize_scan` | `tools-capability --json` ; `scope-check <run_dir> <url> --scanner screenshot` | Container-first; binary fallback. |
 | Static scanners (semgrep/bandit/pip-audit/osv/codeql) | implemented | `cmd_scan_*` :10128–10224 | `tools-capability --json` | Read-only; lower ROE risk. |
 | Capability/health reporting | implemented | `tools-capability`, `tool-health` | `python3 vapt/harness/harness.py tools-capability --json` | Make Docker-vs-binary fallback state clearer (T4). |
 

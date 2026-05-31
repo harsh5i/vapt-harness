@@ -121,22 +121,20 @@ def _authorize_scan(run_dir: Path, target_url: str | None, scanner: str) -> None
     a structured JSON refusal record is written under the run's logs and the
     command exits non-zero without spawning the scanner.
     """
-    sys.path.insert(0, str(ROOT / 'vapt' / 'harness'))
     from gates.authorization import authorize, AuthorizationError
     _state, target = _h.load_run(run_dir)
     try:
-        _h.authorize(run_dir, target, target_url, scanner)
-    except _h.AuthorizationError as exc:
+        authorize(run_dir, target, target_url, scanner)
+    except AuthorizationError as exc:
         print(json.dumps({'authorization': 'denied', **exc.record}, indent=2))
         raise SystemExit(2)
 
 def cmd_scope_check(args: argparse.Namespace) -> None:
     """Dry-run the scope/ROE gate without executing any scanner."""
-    sys.path.insert(0, str(ROOT / 'vapt' / 'harness'))
     from gates.authorization import evaluate
     run_dir = run_path(args.run_dir)
     _state, target = _h.load_run(run_dir)
-    record = _h.evaluate(target, args.target_url, args.scanner)
+    record = evaluate(target, args.target_url, args.scanner)
     print(json.dumps(record, indent=2))
     if record['decision'] != 'allow':
         raise SystemExit(2)

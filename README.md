@@ -104,7 +104,7 @@ Authoritative per-capability status lives in [`STATUS.md`](STATUS.md). Summary:
 | Path | State |
 |------|-------|
 | Evidence-gated candidate lifecycle | Implemented. |
-| N-day discovery (advisory-driven) | Partial. Scanners wired but not yet ROE-gated; Docker-gated for ZAP/sqlmap. |
+| N-day discovery (advisory-driven) | Partial. Scanner wrappers are ROE-gated (fail-closed scope + `active_scan_allowed`). Remaining gaps: Docker / local tool availability for ZAP/sqlmap and real-campaign validation. |
 | Logic-flaw 0day via source-reading | Partial / future. AST is single-statement, synthetic-validated; not proven on a real campaign. |
 | Memory-corruption / crypto / protocol-state 0day | Out of scope (future). |
 
