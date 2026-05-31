@@ -122,4 +122,4 @@ the repo.
 
 ## License
 
-To be decided by the maintainer before public release.
+Apache License 2.0. See [LICENSE](LICENSE).
