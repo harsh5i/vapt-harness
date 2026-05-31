@@ -11,6 +11,7 @@ import datetime as dt
 import io
 import json
 import os
+import shlex
 import shutil
 import sys
 import time
@@ -587,7 +588,7 @@ def _synthetic_evidence_kind(cand: dict[str, Any]) -> str:
 def _load_watch_module(name: str) -> Any:
     sys.path.insert(0, str(ROOT / 'vapt' / 'harness'))
     import importlib
-    return _h.importlib.import_module(f'watch.{name}')
+    return importlib.import_module(f'watch.{name}')
 
 def _discovery_queue_dir() -> Path:
     return ROOT / 'vapt' / 'harness' / 'queue'

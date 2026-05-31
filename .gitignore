@@ -48,11 +48,21 @@ vapt/management/
 # CHEATSHEET + ONBOARDING.
 vapt/harness/exports/
 
-# Runtime queue state. The phaseN-check fixtures
-# (advisory-refresh-fixture, harness-fixture, phase4_fixture,
-# phase4_remote_check) ARE tracked because the check commands consume them.
+# Runtime queue state. The phaseN-check fixture seeds (the tracked
+# YAMLs originally committed at decomposition time) ARE tracked because
+# the check commands consume them. gitignore does not untrack files
+# already in the index, so the seeds remain. The patterns below stop
+# *new* runtime accumulation in the fixture dirs from polluting
+# `git status` (phase4-check / harness-fixture writes new timestamped
+# YAMLs on every run).
 vapt/harness/queue/discovery/
 vapt/harness/queue/demo-pyml/
+vapt/harness/queue/*-fixture/*.yaml
+vapt/harness/queue/*-fixture/*.yaml.lock
+vapt/harness/queue/*-fixture/*.tmp
+vapt/harness/queue/phase4_fixture/*.yaml
+vapt/harness/queue/phase4_fixture/*.yaml.lock
+vapt/harness/queue/phase4_fixture/*.tmp
 
 # Runtime ledger lock files.
 vapt/harness/corpus/*.jsonl.lock
