@@ -110,15 +110,19 @@ Authoritative per-capability status lives in [`STATUS.md`](STATUS.md). Summary:
 
 ## Repo contents
 
-This repo ships the engine: source code, doctrine, the captive
-fixture under `vapt/harness/fixtures/seeded_bugs_repo/` (fully
-synthetic), and the unit test suite.
+This repo ships the engine, its operating knowledge under
+`vapt/harness/knowledge/`, the captive fixture under
+`vapt/harness/fixtures/seeded_bugs_repo/` (fully synthetic), and the
+unit test suite.
 
-Operational state — candidate ledgers, submission ledgers, per-target
-profiles, per-target runs, queue state — is gitignored and lives on
-the operator's machine under `vapt/engagements/` and
-`vapt/harness/corpus/`. Those paths are created on first use; nothing
-in them travels with the repo.
+Operational state is per-operator and gitignored:
+
+- `vapt/engagements/<id>/` — target profiles, runs, evidence, reports.
+- `vapt/harness/corpus/candidates.jsonl`, `submissions.jsonl` — the
+  cross-engagement ledgers.
+- `vapt/harness/queue/<id>/` — per-target queue state.
+
+The harness creates these on first use.
 
 ## License
 
