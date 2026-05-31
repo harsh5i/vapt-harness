@@ -241,8 +241,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(func=_h.cmd_weights_show)
 
     p = sub.add_parser("phase2-check", help="run Phase 2 feedback-loop acceptance checks")
-    p.add_argument("--run-dir", default="vapt/engagements/demo-target/runs/demo-target/2026-05-16-initial")
-    p.add_argument("--target-id", default="demo-target")
+    p.add_argument("--run-dir", default="vapt/harness/tests/results/phase2_check_run")
+    p.add_argument("--target-id", default="demo")
     p.add_argument("--refresh-retro", action="store_true")
     p.set_defaults(func=_h.cmd_phase2_check)
 

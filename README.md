@@ -108,17 +108,17 @@ Authoritative per-capability status lives in [`STATUS.md`](STATUS.md). Summary:
 | Logic-flaw 0day via source-reading | Partial / future. AST is single-statement, synthetic-validated; not proven on a real campaign. |
 | Memory-corruption / crypto / protocol-state 0day | Out of scope (future). |
 
-## Provenance
+## Publishability
 
-Extracted on 2026-05-28 from the in-place engagement tree at
-`vapt/`. Per-target
-bug bounty data was intentionally excluded; only captive fixtures and
-the cross-engagement corpus schema travel with the repo.
+This repo contains the engine only: source code, doctrine, captive
+fixtures, and unit tests. Operational data — candidate ledgers,
+submission ledgers, per-target profiles, per-target runs, queue
+state per engagement — is gitignored and lives on the operator's
+machine under `vapt/engagements/` and `vapt/harness/corpus/`.
 
-**Before pushing to any remote**, review `vapt/harness/corpus/candidates.jsonl`
-for prior research material you may not want public. The seeded
-fixture under `vapt/harness/fixtures/seeded_bugs_repo/` is fully
-synthetic and safe.
+The seeded fixture under `vapt/harness/fixtures/seeded_bugs_repo/`
+is fully synthetic and is the only sample bug data that travels with
+the repo.
 
 ## License
 

@@ -54,15 +54,20 @@ vapt/harness/exports/
 # already in the index, so the seeds remain. The patterns below stop
 # *new* runtime accumulation in the fixture dirs from polluting
 # `git status` (phase4-check / harness-fixture writes new timestamped
-# YAMLs on every run).
+# YAMLs on every run). Per-target queue subdirs (any name) are
+# treated as engagement state and never tracked.
 vapt/harness/queue/discovery/
-vapt/harness/queue/demo-pyml/
 vapt/harness/queue/*-fixture/*.yaml
 vapt/harness/queue/*-fixture/*.yaml.lock
 vapt/harness/queue/*-fixture/*.tmp
 vapt/harness/queue/phase4_fixture/*.yaml
 vapt/harness/queue/phase4_fixture/*.yaml.lock
 vapt/harness/queue/phase4_fixture/*.tmp
+
+# Cross-engagement candidate and submission ledgers. These hold
+# operational data and must stay local-only.
+vapt/harness/corpus/candidates.jsonl
+vapt/harness/corpus/submissions.jsonl
 
 # Runtime ledger lock files.
 vapt/harness/corpus/*.jsonl.lock

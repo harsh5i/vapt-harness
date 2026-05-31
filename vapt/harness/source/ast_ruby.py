@@ -135,7 +135,7 @@ _RULES: list[tuple[str, re.Pattern[str], str]] = [
     (
         "ssrf_open_uri",
         re.compile(r"\bURI\.open\s*\("),
-        "URI.open (open-uri) fetches a remote URL; if the URL is attacker-controlled this is SSRF - route through SSRFResolver",
+        "URI.open (open-uri) fetches a remote URL; if the URL is attacker-controlled this is SSRF - route through an SSRF-aware resolver",
     ),
     (
         "ssrf_open_uri",
@@ -145,7 +145,7 @@ _RULES: list[tuple[str, re.Pattern[str], str]] = [
     (
         "ssrf_open_uri",
         re.compile(r"\bNet::HTTP\.(get|post|get_response|start)\s*\([^)]*#\{"),
-        "Net::HTTP request to an interpolated URL/host; if attacker-controlled this is SSRF - validate against SSRFResolver",
+        "Net::HTTP request to an interpolated URL/host; if attacker-controlled this is SSRF - validate against an SSRF-aware resolver",
     ),
     (
         "ssrf_open_uri",

@@ -8,10 +8,10 @@ def _promotable():
     field at a time to prove each blocker fires."""
     return {
         "id": "C1",
-        "attacker_control": "attacker-supplied hostname in oneboxed URL",
-        "entrypoint": "SSRFResolver.resolve via onebox fetch",
+        "attacker_control": "attacker-supplied hostname in a user-provided URL",
+        "entrypoint": "outbound URL fetch helper",
         "trust_boundary": "external URL crosses into outbound HTTP client",
-        "sink": "SSRFResolver::SSRFDetector.ip_allowed?",
+        "sink": "SSRF-aware URL resolver IP allowlist check",
         "impact": "reaches internal 127.0.0.1 services",
         "latest_affected": "v3.4.0",
         "cwe": "CWE-918",
