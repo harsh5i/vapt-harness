@@ -1,9 +1,10 @@
-"""Source-reading substrate (Phase 5 Move 5).
+"""Source-reading substrate.
 
-Placeholder package. Source-reading probes (patch variant hunters, auth-chain
-auditors, etc.) plug in here with a widened probe contract that takes
-{repo, commit, AST} targets and produces {file, line, bug_class, hypothesis,
-reproducer_steps, evidence} candidates.
+Target lookup (`targets.py`), AST walkers (`ast_python.py`, `ast_ruby.py`),
+acquire + index helpers (`acquire.py`, `index.py`), and the cmd_source_* CLI
+handlers (`commands.py`).
 
-See `vapt/management/MYTHOS_SUBSTRATE_PHASE5_ROADMAP_2026-05-28.md` ss 9.
+The AST walker is intra-function taint-flow aware; sink rules check each call
+arg against the enclosing function's tainted-local set in addition to the
+static UNTRUSTED_VAR_HINTS vocabulary.
 """

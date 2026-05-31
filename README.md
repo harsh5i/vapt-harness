@@ -10,27 +10,18 @@ vs. partial vs. future. This README describes intent and usage; do not read a
 capability as working unless `STATUS.md` marks it `implemented`. For day-to-day
 operator commands, see [`CHEATSHEET.md`](CHEATSHEET.md).
 
-Built across Phases 1-5. Phase 5 (2026-05-28) added the moves described
-in `management/MYTHOS_SUBSTRATE_PHASE5_ROADMAP_2026-05-28.md`:
+What the harness provides:
 
-- **Move 1** - the outcome-tuning loop is fed with synthetic seeds
-  (production runs default-exclude them); OSV queries are cached so
-  dedup works offline without silent degradation.
-- **Move 2** - package skeleton landed (`harness/{campaign,gates,ledger,watch,mutation,tools,source,cache}/`).
-  New code lands in packages; legacy code in `harness.py` migrates
-  touch-and-extract.
-- **Move 3** - wrappers for OWASP ZAP, sqlmap, JWT tooling, and
-  Playwright screenshots. Container-first; local-binary fallback.
-  Capability gaps surface via `harness tools-capability`.
-- **Move 4** - GHSA-based autonomous target discovery. Sweep produces
-  proposals; operators claim before any campaign runs.
-- **Move 5** - source-reading substrate (acquire/index/AST walker)
-  with two reference probes (`patch_variant_hunter`, `auth_chain_audit`).
-  Catches 4/5 seeded Python bug-class patterns end-to-end.
+- An evidence-gated candidate lifecycle (`candidate-add → dedup → gate → prove → variant → patch-diff → report-gate → submit`) where each state has a hard precondition; you cannot skip ahead.
+- A binding orient/submit loop that hands one step at a time to the AI/operator and only advances when the recorded outcome satisfies the gate.
+- A learning loop that folds real triage verdicts and terminal outcomes into score weights so the next run prioritizes better.
+- A scope/ROE gate that refuses scanner execution out-of-scope or without explicit `active_scan_allowed` in the target profile; refusals write a JSON record and exit non-zero.
+- Source-reading probes with an intra-function taint-flow AST walker for Python (and a Ruby walker for guard-awareness).
+- Reusable campaign-module adapters and a runtime queue fed by local-git, release, and GHSA/OSV advisory polling.
 
 ## Layout
 
-Entering `vapt/` follows a **Mandatory -> Management -> Records** view:
+Entering `vapt/` follows a **Mandatory -> Records** view:
 
 ```
 vapt/
@@ -39,10 +30,8 @@ vapt/
                        probes/, gates/, fixtures/ (captive), corpus/ (learning).
   engagements/         Records: one subfolder per target, structured as the
                        harness directs (targets/, adapters/, runs/<t>/<id>/).
-                       Per-target dirs are gitignored - bounty data stays local.
-  management/          Roadmaps, plans, design notes, diagnostics. Context for
-                       improving the harness; not part of execution.
-  env/                 Optional full VAPT toolchain requirements
+                       Per-target dirs are gitignored - target data stays local.
+  env/                 Optional full toolchain requirements
   requirements.txt     Minimum runtime (PyYAML)
 README.md
 ```

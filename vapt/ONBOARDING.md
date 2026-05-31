@@ -10,37 +10,33 @@ ledger before acting.
 
 This guide unifies and points at three existing surfaces:
 
+- `/STATUS.md` - capability truth (single source of what is implemented
+  vs. partial vs. future).
 - `vapt/harness/knowledge/INDEX.md`, `principles.md`, `workflow.md`,
   `scoring.yaml` - doctrine and the candidate state machine.
 - `vapt/harness/agents/*.md` - per-role checklists (you adopt one at a
   time depending on the lifecycle stage).
-- `vapt/management/MYTHOS_SUBSTRATE_PHASE5_ROADMAP_2026-05-28.md` and
-  per-Move evidence docs - architecture context and current capability
-  state.
 
 If this guide and any of the above disagree, follow this guide for
 operating norms and the existing docs for technical contracts. Report
 the conflict in your session output so the maintainer can reconcile.
 
-### Repository layout (Mandatory -> Management -> Records)
+### Repository layout
 
-When you enter `vapt/` you will see exactly four things:
+When you enter `vapt/` you will see three things:
 
 - `ONBOARDING.md` (this file) - the mandatory cold-start contract.
 - `harness/` - the engine: `harness.py`, `knowledge/`, `agents/`,
   `config/`, `probes/`, `gates/`, captive `fixtures/`, and the
   cross-engagement learning `corpus/` (candidates + submissions).
   Everything needed to *run* the harness lives here.
-- `engagements/` - the Records bucket. One subfolder per target,
-  structured as the harness directs: `engagements/<target>/targets/`,
-  `adapters/`, and `runs/<target>/<run-id>/`. This is gitignored
-  per-target; bounty data never enters the public mirror.
-- `management/` - roadmaps, plans, design notes, diagnostics. Context
-  for *improving* the harness, not part of execution.
+- `engagements/` - one subfolder per authorized target, structured as
+  the harness directs: `engagements/<target>/targets/`, `adapters/`,
+  and `runs/<target>/<run-id>/`. Gitignored per-target; target data
+  never enters the GitHub mirror.
 
-Records are written under `engagements/`; never write findings into
-`management/` or as prose side-files. The ledger under each run dir is
-the only sanctioned home for candidates.
+Records are written under `engagements/`. The ledger under each run
+dir is the only sanctioned home for candidates.
 
 ---
 

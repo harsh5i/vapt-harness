@@ -22,7 +22,7 @@ if _h is None or not hasattr(_h, "cmd_orient"):
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Local mini-MDASH VAPT/BB harness")
+    parser = argparse.ArgumentParser(description="Evidence-gated vulnerability research harness for authorized assessment.")
     parser.add_argument("--version", action="version", version=HARNESS_VERSION)
     sub = parser.add_subparsers(required=True)
 

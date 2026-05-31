@@ -39,3 +39,20 @@ vapt/engagements/*/
 
 # Cloned target source for a run (target.yaml source_path); never committed.
 engagement/
+
+# Internal planning / strategy / build-history docs. Operator-facing truth
+# lives in STATUS.md, README.md, CHEATSHEET.md, and vapt/ONBOARDING.md.
+vapt/management/
+
+# Outdated single-file harness export. Superseded by README + STATUS +
+# CHEATSHEET + ONBOARDING.
+vapt/harness/exports/
+
+# Runtime queue state. The phaseN-check fixtures
+# (advisory-refresh-fixture, harness-fixture, phase4_fixture,
+# phase4_remote_check) ARE tracked because the check commands consume them.
+vapt/harness/queue/discovery/
+vapt/harness/queue/demo-pyml/
+
+# Runtime ledger lock files.
+vapt/harness/corpus/*.jsonl.lock

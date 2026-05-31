@@ -142,5 +142,4 @@ _h mutation-coverage-check <path>
 
 - Truth: [`STATUS.md`](STATUS.md)
 - Cold-start contract: [`vapt/ONBOARDING.md`](vapt/ONBOARDING.md)
-- Backlog: `vapt/management/IMPROVEMENT_BACKLOG_2026-05-30.md`
-- Roadmap: `vapt/management/HARNESS_ORCHESTRATION_FRAMEWORK_2026-05-29.md`
+- Package layout: [`vapt/harness/README.md`](vapt/harness/README.md)
