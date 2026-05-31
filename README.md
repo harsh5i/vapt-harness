@@ -108,17 +108,17 @@ Authoritative per-capability status lives in [`STATUS.md`](STATUS.md). Summary:
 | Logic-flaw 0day via source-reading | Partial / future. AST is single-statement, synthetic-validated; not proven on a real campaign. |
 | Memory-corruption / crypto / protocol-state 0day | Out of scope (future). |
 
-## Publishability
+## Repo contents
 
-This repo contains the engine only: source code, doctrine, captive
-fixtures, and unit tests. Operational data — candidate ledgers,
-submission ledgers, per-target profiles, per-target runs, queue
-state per engagement — is gitignored and lives on the operator's
-machine under `vapt/engagements/` and `vapt/harness/corpus/`.
+This repo ships the engine: source code, doctrine, the captive
+fixture under `vapt/harness/fixtures/seeded_bugs_repo/` (fully
+synthetic), and the unit test suite.
 
-The seeded fixture under `vapt/harness/fixtures/seeded_bugs_repo/`
-is fully synthetic and is the only sample bug data that travels with
-the repo.
+Operational state — candidate ledgers, submission ledgers, per-target
+profiles, per-target runs, queue state — is gitignored and lives on
+the operator's machine under `vapt/engagements/` and
+`vapt/harness/corpus/`. Those paths are created on first use; nothing
+in them travels with the repo.
 
 ## License
 
