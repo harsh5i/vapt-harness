@@ -24,11 +24,23 @@ Bug classes covered in this pass:
 A "candidate finding" is `{file, line, bug_class, hypothesis, snippet}`.
 The hypothesis is a sentence the operator (or LLM auditor) can verify.
 
-Taint flow: per-function, the walker tracks which local names have been
-assigned from an untrusted-shaped expression. A subsequent sink call that
-references such a name is flagged, so the
-`path = request.args.get(...) + ".txt"; open(path, ...)` shape no longer
-slips past as a single-statement-only check would.
+Taint flow:
+
+- Intra-procedural: a function-local set of names assigned from an
+  untrusted-shaped expression. A subsequent sink call that references
+  such a name is flagged. Handles Assign / AnnAssign / AugAssign and
+  tuple-unpack.
+
+- Inter-procedural (same file only): a fixed-point pass propagates taint
+  across calls inside one file. If caller passes a tainted argument into
+  a callee's parameter (positional by index or keyword by name), that
+  parameter becomes a taint source in the callee. If a callee returns a
+  tainted expression, the call-site expression is treated as tainted
+  for assignment propagation.
+
+Inter-procedural propagation is bounded: same file only, no attribute
+or method resolution, no aliasing through containers, max 6 fixed-point
+iterations.
 """
 
 from __future__ import annotations
@@ -106,37 +118,177 @@ def _assign_targets(node: ast.AST) -> list[str]:
     return names
 
 
-def _function_taint(func: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
-    """Walk a function body in source order; return locals assigned from an
-    untrusted-shaped source.
-
-    Seeded with the function's parameters whose names match the hint
-    vocabulary (so `def serve_file(request): ...` marks `request` tainted
-    from the start, even though it is just a Name and would normally only
-    match the hint check on access).
-    """
-    tainted: set[str] = set()
+def _initial_seed(func: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
+    """Params whose names match the hint vocabulary are taint sources."""
+    seed: set[str] = set()
     for arg in func.args.args + func.args.posonlyargs + func.args.kwonlyargs:
         if arg.arg.lower() in UNTRUSTED_VAR_HINTS:
-            tainted.add(arg.arg)
-    # walk every statement of the body in textual order so transitive
-    # taint (a = b; c = a) propagates the same way the interpreter would
-    # see it; ast.walk would be order-independent and lose chains
+            seed.add(arg.arg)
+    return seed
+
+
+def _resolved_callee(
+    call: ast.Call, funcs_by_name: dict[str, ast.AST]
+) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
+    """Same-file resolution: `name(...)` -> local FunctionDef of that name.
+
+    Attribute and computed calls are intentionally not resolved here.
+    """
+    if isinstance(call.func, ast.Name):
+        callee = funcs_by_name.get(call.func.id)
+        if isinstance(callee, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return callee
+    return None
+
+
+def _expr_calls_tainted_returner(
+    node: ast.AST,
+    funcs_by_name: dict[str, ast.AST],
+    tainted_returns: set[int],
+) -> bool:
+    """Does this expression contain a Call to a function whose return is
+    known to be tainted (same-file resolution only)?
+    """
+    for sub in ast.walk(node):
+        if isinstance(sub, ast.Call):
+            callee = _resolved_callee(sub, funcs_by_name)
+            if callee is not None and id(callee) in tainted_returns:
+                return True
+    return False
+
+
+def _function_taint(
+    func: ast.FunctionDef | ast.AsyncFunctionDef,
+    seed: set[str],
+    funcs_by_name: dict[str, ast.AST],
+    tainted_returns: set[int],
+) -> set[str]:
+    """Walk a function body; return locals assigned from an untrusted-shaped
+    source, seeded with the supplied param set (which includes both hint-vocab
+    matches and any inter-procedural taint from callers).
+
+    Recognises an assignment as taint-introducing if RHS contains:
+    - a Name in UNTRUSTED_VAR_HINTS or in the running tainted set, OR
+    - a Call to a function whose return is tainted (same-file).
+    """
+    tainted: set[str] = set(seed)
     for stmt in ast.walk(func):
         if isinstance(stmt, (ast.Assign, ast.AnnAssign)):
             rhs = stmt.value
             if rhs is None:
                 continue
-            if _is_untrusted_name(rhs, tainted):
+            if (
+                _is_untrusted_name(rhs, tainted)
+                or _expr_calls_tainted_returner(rhs, funcs_by_name, tainted_returns)
+            ):
                 for name in _assign_targets(stmt):
                     tainted.add(name)
         elif isinstance(stmt, ast.AugAssign):
-            # `s += untrusted` taints s; `s += literal` also leaves any
-            # prior taint on s untouched (set is monotonic for this pass).
-            if _is_untrusted_name(stmt.value, tainted):
+            if (
+                _is_untrusted_name(stmt.value, tainted)
+                or _expr_calls_tainted_returner(stmt.value, funcs_by_name, tainted_returns)
+            ):
                 for name in _assign_targets(stmt):
                     tainted.add(name)
     return tainted
+
+
+def _positional_param_names(func: ast.FunctionDef | ast.AsyncFunctionDef) -> list[str]:
+    """In positional order: posonly + regular. Excludes *args and kwonly."""
+    return [a.arg for a in func.args.posonlyargs + func.args.args]
+
+
+def _all_param_names(func: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
+    return {a.arg for a in func.args.posonlyargs + func.args.args + func.args.kwonlyargs}
+
+
+def _propagate_cross_function_taint(
+    tree: ast.AST, *, max_iters: int = 6
+) -> dict[int, set[str]]:
+    """Fixed-point inter-procedural taint within one file.
+
+    Returns a map func-id -> tainted local names. Callers passing tainted
+    args into local functions extend the callee's seed; returning a
+    tainted expression marks that function as returning tainted. Bounded
+    by max_iters to terminate on mutual recursion.
+    """
+    funcs_by_name: dict[str, ast.AST] = {}
+    all_funcs: list[ast.FunctionDef | ast.AsyncFunctionDef] = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            all_funcs.append(node)
+            funcs_by_name[node.name] = node  # last def wins on shadowing
+
+    seed: dict[int, set[str]] = {id(fn): _initial_seed(fn) for fn in all_funcs}
+    tainted_returns: set[int] = set()
+    local_taint: dict[int, set[str]] = {
+        id(fn): _function_taint(fn, seed[id(fn)], funcs_by_name, tainted_returns)
+        for fn in all_funcs
+    }
+
+    for _ in range(max_iters):
+        changed = False
+
+        # Propagate taint across call edges.
+        for caller in all_funcs:
+            caller_taint = local_taint[id(caller)]
+            for sub in ast.walk(caller):
+                if not isinstance(sub, ast.Call):
+                    continue
+                callee = _resolved_callee(sub, funcs_by_name)
+                if callee is None:
+                    continue
+                positional = _positional_param_names(callee)
+                all_params = _all_param_names(callee)
+                # positional args by index
+                for i, arg in enumerate(sub.args):
+                    if i >= len(positional):
+                        break
+                    if (
+                        _is_untrusted_name(arg, caller_taint)
+                        or _expr_calls_tainted_returner(arg, funcs_by_name, tainted_returns)
+                    ):
+                        if positional[i] not in seed[id(callee)]:
+                            seed[id(callee)].add(positional[i])
+                            changed = True
+                # keyword args by name
+                for kw in sub.keywords:
+                    if kw.arg is None or kw.arg not in all_params:
+                        continue
+                    if (
+                        _is_untrusted_name(kw.value, caller_taint)
+                        or _expr_calls_tainted_returner(kw.value, funcs_by_name, tainted_returns)
+                    ):
+                        if kw.arg not in seed[id(callee)]:
+                            seed[id(callee)].add(kw.arg)
+                            changed = True
+
+        # Recompute local taint with updated seeds + return-taint awareness.
+        for fn in all_funcs:
+            new_t = _function_taint(fn, seed[id(fn)], funcs_by_name, tainted_returns)
+            if new_t != local_taint[id(fn)]:
+                local_taint[id(fn)] = new_t
+                changed = True
+
+        # Detect tainted returns.
+        for fn in all_funcs:
+            if id(fn) in tainted_returns:
+                continue
+            fn_taint = local_taint[id(fn)]
+            for sub in ast.walk(fn):
+                if isinstance(sub, ast.Return) and sub.value is not None:
+                    if (
+                        _is_untrusted_name(sub.value, fn_taint)
+                        or _expr_calls_tainted_returner(sub.value, funcs_by_name, tainted_returns)
+                    ):
+                        tainted_returns.add(id(fn))
+                        changed = True
+                        break
+
+        if not changed:
+            break
+
+    return local_taint
 
 
 def scan_file(path: Path, *, repo_root: Path | None = None) -> list[dict[str, Any]]:
@@ -154,21 +306,9 @@ def scan_file(path: Path, *, repo_root: Path | None = None) -> list[dict[str, An
     rel_path = str(path.relative_to(repo_root)) if repo_root else str(path)
     findings: list[dict[str, Any]] = []
 
-    # Pre-compute per-function taint sets so the sink scan below can see
-    # locals assigned from untrusted-shaped sources earlier in the same
-    # function.
-    func_taint: dict[int, set[str]] = {}
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            func_taint[id(node)] = _function_taint(node)
-
-    def _enclosing_taint(call: ast.AST) -> set[str] | None:
-        # Walk the AST again locating which function (if any) lexically
-        # contains this call. For module-level calls return None so the
-        # call falls back to the static-hint-only check.
-        for fn in func_taint:
-            pass  # see below; we re-walk per call which is O(N^2) only
-        return None
+    # Pre-compute per-function taint sets, including inter-procedural
+    # propagation across same-file call edges (fixed point, bounded).
+    func_taint: dict[int, set[str]] = _propagate_cross_function_taint(tree)
 
     # Build a child→parent map once so we can locate the enclosing function
     # cheaply for each Call. Cheaper than re-walking the whole tree per call.

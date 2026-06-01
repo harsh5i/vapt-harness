@@ -145,6 +145,111 @@ def b():
     assert pt[0]["line"] == 4
 
 
+# --- cross-function taint (same file) --------------------------------------
+
+
+def test_helper_called_with_tainted_arg_flags(tmp_path):
+    # Caller passes tainted local into helper's plain param -> helper's
+    # open(p) must flag.
+    body = """
+def helper(p):
+    return open(p, 'rb')
+
+def serve(request):
+    path = request.args.get('x')
+    return helper(path)
+"""
+    findings = _scan(tmp_path, body)
+    pt = [f for f in findings if f["bug_class"] == "path_traversal_unguarded_join"]
+    # open(p) inside helper is at line 3
+    assert any(f["line"] == 3 for f in pt), f"expected line 3 flagged, got {pt}"
+
+
+def test_helper_called_with_literal_does_not_flag(tmp_path):
+    # helper called only with literal -> no taint should propagate.
+    body = """
+def helper(p):
+    return open(p, 'rb')
+
+def main():
+    return helper('/etc/hostname')
+"""
+    findings = _scan(tmp_path, body)
+    pt = [f for f in findings if f["bug_class"] == "path_traversal_unguarded_join"]
+    assert pt == [], f"helper called with literal must not flag, got {pt}"
+
+
+def test_tainted_return_value_propagates_to_caller(tmp_path):
+    # fetch returns a tainted-derived value; caller assigns from fetch()
+    # and uses it in a sink -> caller's open must flag.
+    body = """
+def fetch(request):
+    return request.args.get('x') + '.txt'
+
+def serve(request):
+    path = fetch(request)
+    return open(path, 'rb')
+"""
+    findings = _scan(tmp_path, body)
+    pt = [f for f in findings if f["bug_class"] == "path_traversal_unguarded_join"]
+    # open(path) is at line 7 inside serve
+    assert any(f["line"] == 7 for f in pt), f"expected line 7 flagged, got {pt}"
+
+
+def test_cross_function_keyword_arg_taint_flags(tmp_path):
+    # Caller passes tainted as keyword arg -> callee's matching param tainted.
+    body = """
+def helper(p=None):
+    return open(p, 'rb')
+
+def serve(request):
+    path = request.args.get('x')
+    return helper(p=path)
+"""
+    findings = _scan(tmp_path, body)
+    pt = [f for f in findings if f["bug_class"] == "path_traversal_unguarded_join"]
+    assert any(f["line"] == 3 for f in pt), f"expected line 3 flagged, got {pt}"
+
+
+def test_cross_function_sql_taint_flags(tmp_path):
+    # Cross-function SQL: caller builds tainted string, passes to executor.
+    body = """
+def run_query(cursor, sql):
+    return cursor.execute(sql)
+
+def find_user(cursor, request):
+    raw = request.args.get('id')
+    sql = "SELECT * FROM users WHERE id = " + raw
+    return run_query(cursor, sql)
+"""
+    findings = _scan(tmp_path, body)
+    sqli = [f for f in findings if f["bug_class"] == "sql_injection_string_format"]
+    # cursor.execute(sql) is at line 3 inside run_query
+    assert any(f["line"] == 3 for f in sqli), f"expected line 3 flagged, got {sqli}"
+
+
+def test_cross_function_recursion_terminates(tmp_path):
+    # Mutually-recursive functions must not blow stack or loop forever; the
+    # walker should reach a fixed point. We assert it at least completes and
+    # propagates taint into the eventual sink.
+    body = """
+def a(request, depth):
+    if depth <= 0:
+        return open(request, 'rb')
+    return b(request, depth - 1)
+
+def b(request, depth):
+    return a(request, depth - 1)
+
+def entry(request):
+    return a(request.args.get('x'), 3)
+"""
+    findings = _scan(tmp_path, body)
+    pt = [f for f in findings if f["bug_class"] == "path_traversal_unguarded_join"]
+    # open(request) inside a is at line 4
+    assert any(f["line"] == 4 for f in pt), f"expected line 4 flagged, got {pt}"
+
+
 # --- regression on existing seeded fixtures --------------------------------
 
 
