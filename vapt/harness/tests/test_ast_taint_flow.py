@@ -13,7 +13,7 @@ HARNESS_DIR = Path(__file__).resolve().parents[1]
 if str(HARNESS_DIR) not in sys.path:
     sys.path.insert(0, str(HARNESS_DIR))
 
-from source.ast_python import scan_file  # noqa: E402
+from source.ast_python import scan_file, scan_files  # noqa: E402
 
 
 def _scan(tmp_path: Path, body: str) -> list[dict]:
@@ -348,6 +348,131 @@ class B:
     lines = sorted(f["line"] for f in pt)
     assert 4 in lines, f"expected A.helper line 4 flagged, got {lines}"
     assert 10 not in lines, f"B.helper line 10 must not flag (literal-only callers), got {lines}"
+
+
+# --- cross-file taint (same package) ---------------------------------------
+
+
+def _write_package(root: Path, files: dict[str, str]) -> list[Path]:
+    """Write a package layout under root and return the .py paths."""
+    paths: list[Path] = []
+    for rel, body in files.items():
+        fp = root / rel
+        fp.parent.mkdir(parents=True, exist_ok=True)
+        fp.write_text(body)
+        if fp.suffix == ".py":
+            paths.append(fp)
+    return sorted(paths)
+
+
+def test_cross_file_positional_taint_flags(tmp_path):
+    files = _write_package(tmp_path, {
+        "lib.py": "def open_path(p):\n    return open(p, 'rb')\n",
+        "main.py": (
+            "from lib import open_path\n"
+            "\n"
+            "def serve(request):\n"
+            "    return open_path(request.args.get('x'))\n"
+        ),
+    })
+    findings = scan_files(files, repo_root=tmp_path)
+    pt = [f for f in findings if f["bug_class"] == "path_traversal_unguarded_join"]
+    assert any(f["file"] == "lib.py" and f["line"] == 2 for f in pt), (
+        f"expected lib.py line 2 flagged, got {pt}"
+    )
+
+
+def test_cross_file_literal_only_does_not_flag(tmp_path):
+    files = _write_package(tmp_path, {
+        "lib.py": "def open_path(p):\n    return open(p, 'rb')\n",
+        "main.py": (
+            "from lib import open_path\n"
+            "\n"
+            "def boot():\n"
+            "    return open_path('/etc/hostname')\n"
+        ),
+    })
+    findings = scan_files(files, repo_root=tmp_path)
+    pt = [f for f in findings if f["bug_class"] == "path_traversal_unguarded_join"]
+    assert pt == [], f"literal-only caller must not flag, got {pt}"
+
+
+def test_cross_file_import_alias_flags(tmp_path):
+    files = _write_package(tmp_path, {
+        "lib.py": "def open_path(p):\n    return open(p, 'rb')\n",
+        "main.py": (
+            "from lib import open_path as opener\n"
+            "\n"
+            "def serve(request):\n"
+            "    return opener(request.args.get('x'))\n"
+        ),
+    })
+    findings = scan_files(files, repo_root=tmp_path)
+    pt = [f for f in findings if f["bug_class"] == "path_traversal_unguarded_join"]
+    assert any(f["file"] == "lib.py" for f in pt), (
+        f"expected lib.py flagged via aliased import, got {pt}"
+    )
+
+
+def test_cross_file_module_dot_call_flags(tmp_path):
+    files = _write_package(tmp_path, {
+        "lib.py": "def open_path(p):\n    return open(p, 'rb')\n",
+        "main.py": (
+            "import lib\n"
+            "\n"
+            "def serve(request):\n"
+            "    return lib.open_path(request.args.get('x'))\n"
+        ),
+    })
+    findings = scan_files(files, repo_root=tmp_path)
+    pt = [f for f in findings if f["bug_class"] == "path_traversal_unguarded_join"]
+    assert any(f["file"] == "lib.py" for f in pt), (
+        f"expected lib.py flagged via module.func call, got {pt}"
+    )
+
+
+def test_cross_file_tainted_return_propagates(tmp_path):
+    # lib.fetch returns a tainted expression (flask.request.args), but the
+    # caller passes no tainted argument and doesn't reference an
+    # untrusted-shaped name itself. Only cross-file tainted-return
+    # propagation can flag the caller's open(path).
+    files = _write_package(tmp_path, {
+        "lib.py": (
+            "import flask\n"
+            "\n"
+            "def fetch():\n"
+            "    return flask.request.args.get('x') + '.txt'\n"
+        ),
+        "main.py": (
+            "from lib import fetch\n"
+            "\n"
+            "def serve():\n"
+            "    path = fetch()\n"
+            "    return open(path, 'rb')\n"
+        ),
+    })
+    findings = scan_files(files, repo_root=tmp_path)
+    pt = [f for f in findings if f["bug_class"] == "path_traversal_unguarded_join"]
+    assert any(f["file"] == "main.py" and f["line"] == 5 for f in pt), (
+        f"expected main.py line 5 flagged via cross-file tainted return, got {pt}"
+    )
+
+
+def test_cross_file_stdlib_does_not_resolve(tmp_path):
+    # Importing the local `os` module shadow should not produce taint
+    # bleed: stdlib is not in our package, so calls to os.system here are
+    # only flagged by the existing os.system static rule, not cross-file.
+    files = _write_package(tmp_path, {
+        "main.py": (
+            "import os\n"
+            "\n"
+            "def boot():\n"
+            "    return os.system('uptime')\n"
+        ),
+    })
+    findings = scan_files(files, repo_root=tmp_path)
+    # `os.system('uptime')` is a literal-string call, so no flag at all.
+    assert findings == [], f"expected no findings, got {findings}"
 
 
 # --- regression on existing seeded fixtures --------------------------------

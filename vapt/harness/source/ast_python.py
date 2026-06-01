@@ -172,17 +172,85 @@ def _resolved_callee(
     return None
 
 
+def _resolve_imported_callee(
+    call: ast.Call,
+    fc: "FileCtx",
+    global_funcs: dict[str, ast.AST],
+) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
+    """Cross-file resolution via the caller file's import maps.
+
+    - `Name(local)` where `local` is in func_aliases -> the imported
+      FunctionDef (handles `from mod import f` and `from mod import f as g`).
+    - `Attribute(value=Name(mod_alias), attr=name)` where `mod_alias` is in
+      module_aliases -> resolves `<mod>.<name>` against the global table
+      (handles `import mod` and `import mod as alias`).
+
+    Returns None if the call cannot be resolved to an in-package
+    FunctionDef. Stdlib / third-party imports therefore never resolve.
+    """
+    if isinstance(call.func, ast.Name):
+        fn = fc.func_aliases.get(call.func.id)
+        if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return fn
+    if (
+        isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name)
+    ):
+        mod_alias = call.func.value.id
+        mod = fc.module_aliases.get(mod_alias)
+        if mod is not None:
+            qualified = f"{mod}.{call.func.attr}"
+            fn = global_funcs.get(qualified)
+            if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                return fn
+    return None
+
+
+def _resolve_call_in_pkg(
+    call: ast.Call,
+    caller: ast.FunctionDef | ast.AsyncFunctionDef,
+    fc: "FileCtx",
+    global_funcs: dict[str, ast.AST],
+) -> tuple[ast.FunctionDef | ast.AsyncFunctionDef | None, int]:
+    """Resolve a callsite to a callee + positional-offset (1 for self.method).
+
+    Tries in order: same-file free function -> cross-file via import ->
+    same-class self.method dispatch. Returns (None, 0) if unresolved.
+    """
+    callee = _resolved_callee(call, fc.funcs_by_name)
+    if callee is not None:
+        return callee, 0
+    callee = _resolve_imported_callee(call, fc, global_funcs)
+    if callee is not None:
+        return callee, 0
+    if (
+        isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "self"
+    ):
+        cls = fc.class_of_func.get(id(caller))
+        if cls is not None:
+            method = fc.class_methods[id(cls)].get(call.func.attr)
+            if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                return method, 1
+    return None, 0
+
+
 def _expr_calls_tainted_returner(
     node: ast.AST,
-    funcs_by_name: dict[str, ast.AST],
+    fc: "FileCtx",
+    global_funcs: dict[str, ast.AST],
     tainted_returns: set[int],
 ) -> bool:
     """Does this expression contain a Call to a function whose return is
-    known to be tainted (same-file resolution only)?
+    known to be tainted? Resolves same-file and cross-file (via the
+    caller file's import maps).
     """
     for sub in ast.walk(node):
         if isinstance(sub, ast.Call):
-            callee = _resolved_callee(sub, funcs_by_name)
+            callee = _resolved_callee(sub, fc.funcs_by_name) or _resolve_imported_callee(
+                sub, fc, global_funcs
+            )
             if callee is not None and id(callee) in tainted_returns:
                 return True
     return False
@@ -191,16 +259,18 @@ def _expr_calls_tainted_returner(
 def _function_taint(
     func: ast.FunctionDef | ast.AsyncFunctionDef,
     seed: set[str],
-    funcs_by_name: dict[str, ast.AST],
+    fc: "FileCtx",
+    global_funcs: dict[str, ast.AST],
     tainted_returns: set[int],
 ) -> set[str]:
     """Walk a function body; return locals assigned from an untrusted-shaped
-    source, seeded with the supplied param set (which includes both hint-vocab
-    matches and any inter-procedural taint from callers).
+    source, seeded with the supplied param set (which includes hint-vocab
+    matches plus any inter-procedural taint folded in by callers).
 
     Recognises an assignment as taint-introducing if RHS contains:
     - a Name in UNTRUSTED_VAR_HINTS or in the running tainted set, OR
-    - a Call to a function whose return is tainted (same-file).
+    - a Call to a function whose return is known to be tainted (same-file
+      or cross-file via the caller file's import maps).
     """
     tainted: set[str] = set(seed)
     for stmt in ast.walk(func):
@@ -210,14 +280,14 @@ def _function_taint(
                 continue
             if (
                 _is_untrusted_name(rhs, tainted)
-                or _expr_calls_tainted_returner(rhs, funcs_by_name, tainted_returns)
+                or _expr_calls_tainted_returner(rhs, fc, global_funcs, tainted_returns)
             ):
                 for name in _assign_targets(stmt):
                     tainted.add(name)
         elif isinstance(stmt, ast.AugAssign):
             if (
                 _is_untrusted_name(stmt.value, tainted)
-                or _expr_calls_tainted_returner(stmt.value, funcs_by_name, tainted_returns)
+                or _expr_calls_tainted_returner(stmt.value, fc, global_funcs, tainted_returns)
             ):
                 for name in _assign_targets(stmt):
                     tainted.add(name)
@@ -238,54 +308,211 @@ def _is_method(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     return bool(params) and params[0].arg == "self"
 
 
-def _propagate_cross_function_taint(
-    tree: ast.AST, *, max_iters: int = 6
+def _module_name_from_path(path: Path, repo_root: Path | None) -> str:
+    """Translate a .py path under repo_root into a dotted module name.
+
+    `src/db.py` under root `/.../seeded_bugs_repo` -> `src.db`.
+    `src/__init__.py` -> `src`.
+    Falls back to the bare stem if repo_root is None or path is outside it.
+    """
+    if repo_root is None:
+        return path.stem
+    try:
+        rel = path.relative_to(repo_root)
+    except ValueError:
+        return path.stem
+    parts = list(rel.with_suffix("").parts)
+    if parts and parts[-1] == "__init__":
+        parts = parts[:-1]
+    return ".".join(parts) if parts else path.stem
+
+
+class FileCtx:
+    """Per-file analysis context: parse tree, free functions, class table,
+    and the import alias maps used for cross-file callee resolution.
+    """
+
+    __slots__ = (
+        "path",
+        "source",
+        "tree",
+        "rel_path",
+        "module_name",
+        "funcs_by_name",
+        "all_funcs",
+        "classes",
+        "class_of_func",
+        "class_methods",
+        "func_aliases",
+        "module_aliases",
+    )
+
+    def __init__(
+        self,
+        path: Path,
+        source: str,
+        tree: ast.AST,
+        rel_path: str,
+        module_name: str,
+    ) -> None:
+        self.path = path
+        self.source = source
+        self.tree = tree
+        self.rel_path = rel_path
+        self.module_name = module_name
+        self.funcs_by_name: dict[str, ast.AST] = {}
+        self.all_funcs: list[ast.FunctionDef | ast.AsyncFunctionDef] = []
+        self.classes: list[ast.ClassDef] = []
+        self.class_of_func: dict[int, ast.ClassDef] = {}
+        self.class_methods: dict[int, dict[str, ast.AST]] = {}
+        # Filled by _resolve_imports after the global symbol table exists.
+        self.func_aliases: dict[str, ast.AST] = {}
+        self.module_aliases: dict[str, str] = {}
+
+
+def _build_file_ctx(
+    path: Path,
+    source: str,
+    tree: ast.AST,
+    repo_root: Path | None,
+) -> FileCtx:
+    rel_path = (
+        str(path.relative_to(repo_root)) if repo_root is not None else str(path)
+    )
+    module_name = _module_name_from_path(path, repo_root)
+    fc = FileCtx(path, source, tree, rel_path, module_name)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef):
+            fc.classes.append(node)
+            methods: dict[str, ast.AST] = {}
+            for sub in node.body:
+                if isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    methods[sub.name] = sub
+                    fc.class_of_func[id(sub)] = node
+            fc.class_methods[id(node)] = methods
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            fc.all_funcs.append(node)
+            if id(node) not in fc.class_of_func:
+                # Only module-level free functions go in funcs_by_name so
+                # bare `foo(...)` can't accidentally resolve to a class method.
+                fc.funcs_by_name[node.name] = node
+    return fc
+
+
+def _resolve_relative_module(level: int, module: str | None, current_module: str) -> str | None:
+    """Resolve `from .x import y` style imports to an absolute dotted path.
+
+    `level=1` means one-dot (current package). `level=2` means parent
+    package. Returns None if the resolution goes above the package root.
+    """
+    if level == 0:
+        return module
+    parts = current_module.split(".") if current_module else []
+    # Drop the current module's own name, then `level - 1` further levels.
+    if not parts:
+        return None
+    parts = parts[:-1]  # parent package
+    extra = level - 1
+    if extra > 0:
+        if extra > len(parts):
+            return None
+        parts = parts[: len(parts) - extra]
+    if module:
+        parts.append(module)
+    return ".".join(parts) if parts else (module or None)
+
+
+def _resolve_imports(fc: FileCtx, global_funcs: dict[str, ast.AST]) -> None:
+    """Populate `fc.func_aliases` and `fc.module_aliases` from `import`
+    statements anywhere in the tree (top-level or nested).
+    """
+    for node in ast.walk(fc.tree):
+        if isinstance(node, ast.ImportFrom):
+            mod = _resolve_relative_module(node.level, node.module, fc.module_name)
+            if mod is None:
+                continue
+            for alias in node.names:
+                if alias.name == "*":
+                    continue
+                local = alias.asname or alias.name
+                qualified = f"{mod}.{alias.name}"
+                fn = global_funcs.get(qualified)
+                if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    fc.func_aliases[local] = fn
+                else:
+                    # `from pkg import submodule` -> register as a module
+                    # alias so `submodule.foo(...)` calls resolve.
+                    fc.module_aliases[local] = qualified
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.asname:
+                    fc.module_aliases[alias.asname] = alias.name
+                else:
+                    # `import pkg.sub` makes `pkg` the bound name, but
+                    # `pkg.sub.foo(...)` only resolves if we keep the full
+                    # dotted path under its own key.
+                    top = alias.name.split(".")[0]
+                    fc.module_aliases.setdefault(top, top)
+                    fc.module_aliases[alias.name] = alias.name
+
+
+def _analyze_package(
+    file_ctxs: list[FileCtx], *, max_iters: int = 6
 ) -> dict[int, set[str]]:
-    """Fixed-point inter-procedural taint within one file.
+    """Fixed-point inter-procedural taint across all files in `file_ctxs`.
 
     Returns a map func-id -> tainted local names + dotted attribute paths
     (e.g. `self.path`). Propagation covers:
 
-    - free-function calls: `helper(x)` -> `helper`'s param taint
-    - method calls via self: `self.helper(x)` resolves to the enclosing
-      class's method of that name; positional args shift by 1 to skip self
+    - free-function calls within one file: `helper(x)` -> `helper`'s param
+    - cross-file calls via import maps: `from m import f; f(x)` or
+      `import m; m.f(x)` -> param taint on the imported FunctionDef
+    - self.method dispatch within one class: `self.foo(x)` resolves to
+      the enclosing class's method; positional shifts by 1 to skip self
     - tainted-return: any assignment whose RHS calls a function known to
       return tainted becomes tainted on the LHS
     - self.attr taint: `self.X = tainted` in any method of class C marks
       `self.X` tainted across every method of C (flow-insensitive)
 
+    Cross-package resolution is intentionally narrow: only functions
+    defined in the file_ctxs set are reachable. Stdlib / third-party
+    imports never resolve, so taint cannot leak through them.
+
     Bounded by max_iters to terminate on mutual recursion.
     """
-    funcs_by_name: dict[str, ast.AST] = {}
+    # Step 1: build the global symbol table from module-level free functions
+    # in every file. Methods are excluded so `bare_name(...)` calls can't
+    # accidentally resolve to a class method in another module.
+    global_funcs: dict[str, ast.AST] = {}
+    for fc in file_ctxs:
+        for name, fn in fc.funcs_by_name.items():
+            global_funcs[f"{fc.module_name}.{name}"] = fn
+
+    # Step 2: resolve each file's imports against the global table.
+    for fc in file_ctxs:
+        _resolve_imports(fc, global_funcs)
+
+    # Step 3: aggregate the per-file all_funcs into one list plus a
+    # reverse index from any function id back to its file context.
     all_funcs: list[ast.FunctionDef | ast.AsyncFunctionDef] = []
-    classes: list[ast.ClassDef] = []
-    class_of_func: dict[int, ast.ClassDef] = {}
-    class_methods: dict[int, dict[str, ast.FunctionDef | ast.AsyncFunctionDef]] = {}
+    file_of_func: dict[int, FileCtx] = {}
+    for fc in file_ctxs:
+        for fn in fc.all_funcs:
+            all_funcs.append(fn)
+            file_of_func[id(fn)] = fc
 
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ClassDef):
-            classes.append(node)
-            methods: dict[str, ast.FunctionDef | ast.AsyncFunctionDef] = {}
-            for sub in node.body:
-                if isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    methods[sub.name] = sub
-                    class_of_func[id(sub)] = node
-            class_methods[id(node)] = methods
-
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            all_funcs.append(node)
-            # Only register as a free function if it is module-level (not a
-            # method of any class). Last def wins on shadowing.
-            if id(node) not in class_of_func:
-                funcs_by_name[node.name] = node
-
-    # Per-class self-attribute taint (flow-insensitive).
-    class_self_taint: dict[int, set[str]] = {id(c): set() for c in classes}
+    # Step 4: per-class self-attribute taint, keyed by ClassDef id (unique
+    # across files because each ClassDef is a distinct Python object).
+    class_self_taint: dict[int, set[str]] = {}
+    for fc in file_ctxs:
+        for cls in fc.classes:
+            class_self_taint[id(cls)] = set()
 
     def _seed_with_class(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
         base = _initial_seed(fn)
-        cls = class_of_func.get(id(fn))
+        fc = file_of_func[id(fn)]
+        cls = fc.class_of_func.get(id(fn))
         if cls is not None:
             base |= class_self_taint[id(cls)]
         return base
@@ -293,39 +520,26 @@ def _propagate_cross_function_taint(
     seed: dict[int, set[str]] = {id(fn): _seed_with_class(fn) for fn in all_funcs}
     tainted_returns: set[int] = set()
     local_taint: dict[int, set[str]] = {
-        id(fn): _function_taint(fn, seed[id(fn)], funcs_by_name, tainted_returns)
+        id(fn): _function_taint(
+            fn, seed[id(fn)], file_of_func[id(fn)], global_funcs, tainted_returns
+        )
         for fn in all_funcs
     }
-
-    def _resolve_self_method(
-        call: ast.Call, caller: ast.FunctionDef | ast.AsyncFunctionDef
-    ) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
-        if not (isinstance(call.func, ast.Attribute)
-                and isinstance(call.func.value, ast.Name)
-                and call.func.value.id == "self"):
-            return None
-        cls = class_of_func.get(id(caller))
-        if cls is None:
-            return None
-        return class_methods[id(cls)].get(call.func.attr)
 
     for _ in range(max_iters):
         changed = False
 
-        # Propagate taint across call edges (free functions + self.method).
+        # Propagate taint across call edges (same-file free + cross-file
+        # imported + same-class self.method).
         for caller in all_funcs:
+            caller_fc = file_of_func[id(caller)]
             caller_taint = local_taint[id(caller)]
             for sub in ast.walk(caller):
                 if not isinstance(sub, ast.Call):
                     continue
-                callee = _resolved_callee(sub, funcs_by_name)
-                positional_offset = 0
-                if callee is None:
-                    callee = _resolve_self_method(sub, caller)
-                    # For self.method() the positional args start at param
-                    # index 1 (self is implicit).
-                    if callee is not None:
-                        positional_offset = 1
+                callee, positional_offset = _resolve_call_in_pkg(
+                    sub, caller, caller_fc, global_funcs
+                )
                 if callee is None:
                     continue
                 positional = _positional_param_names(callee)
@@ -336,7 +550,9 @@ def _propagate_cross_function_taint(
                         break
                     if (
                         _is_untrusted_name(arg, caller_taint)
-                        or _expr_calls_tainted_returner(arg, funcs_by_name, tainted_returns)
+                        or _expr_calls_tainted_returner(
+                            arg, caller_fc, global_funcs, tainted_returns
+                        )
                     ):
                         if positional[target_idx] not in seed[id(callee)]:
                             seed[id(callee)].add(positional[target_idx])
@@ -346,31 +562,37 @@ def _propagate_cross_function_taint(
                         continue
                     if (
                         _is_untrusted_name(kw.value, caller_taint)
-                        or _expr_calls_tainted_returner(kw.value, funcs_by_name, tainted_returns)
+                        or _expr_calls_tainted_returner(
+                            kw.value, caller_fc, global_funcs, tainted_returns
+                        )
                     ):
                         if kw.arg not in seed[id(callee)]:
                             seed[id(callee)].add(kw.arg)
                             changed = True
 
         # Recompute local taint with updated seeds + return-taint awareness.
-        # Fold any newly-discovered class self-taint into the seed without
-        # discarding prior arg-edge propagation.
+        # Fold any newly-discovered class self-taint in by union so prior
+        # arg-edge propagation is preserved.
         for fn in all_funcs:
-            cls = class_of_func.get(id(fn))
+            fc = file_of_func[id(fn)]
+            cls = fc.class_of_func.get(id(fn))
             if cls is not None:
                 new_seed = seed[id(fn)] | class_self_taint[id(cls)]
                 if new_seed != seed[id(fn)]:
                     seed[id(fn)] = new_seed
                     changed = True
-            new_t = _function_taint(fn, seed[id(fn)], funcs_by_name, tainted_returns)
+            new_t = _function_taint(
+                fn, seed[id(fn)], fc, global_funcs, tainted_returns
+            )
             if new_t != local_taint[id(fn)]:
                 local_taint[id(fn)] = new_t
                 changed = True
 
-        # Lift any `self.X` taint discovered in a method up to the class's
+        # Lift `self.X` taint discovered in a method up to the class's
         # shared set so other methods inherit it on the next iteration.
         for fn in all_funcs:
-            cls = class_of_func.get(id(fn))
+            fc = file_of_func[id(fn)]
+            cls = fc.class_of_func.get(id(fn))
             if cls is None:
                 continue
             for entry in local_taint[id(fn)]:
@@ -382,12 +604,15 @@ def _propagate_cross_function_taint(
         for fn in all_funcs:
             if id(fn) in tainted_returns:
                 continue
+            fc = file_of_func[id(fn)]
             fn_taint = local_taint[id(fn)]
             for sub in ast.walk(fn):
                 if isinstance(sub, ast.Return) and sub.value is not None:
                     if (
                         _is_untrusted_name(sub.value, fn_taint)
-                        or _expr_calls_tainted_returner(sub.value, funcs_by_name, tainted_returns)
+                        or _expr_calls_tainted_returner(
+                            sub.value, fc, global_funcs, tainted_returns
+                        )
                     ):
                         tainted_returns.add(id(fn))
                         changed = True
@@ -399,56 +624,73 @@ def _propagate_cross_function_taint(
     return local_taint
 
 
-def scan_file(path: Path, *, repo_root: Path | None = None) -> list[dict[str, Any]]:
+def _parse_for_scan(
+    path: Path, repo_root: Path | None
+) -> tuple[FileCtx | None, dict[str, Any] | None]:
+    """Parse a single file into a FileCtx, or return a parse_error finding."""
     try:
         source = path.read_text(errors="replace")
         tree = ast.parse(source, filename=str(path))
     except (OSError, SyntaxError) as exc:
-        return [{
+        return None, {
             "file": str(path),
             "line": 0,
             "bug_class": "parse_error",
             "hypothesis": f"file failed to parse: {exc}",
             "snippet": "",
-        }]
-    rel_path = str(path.relative_to(repo_root)) if repo_root else str(path)
+        }
+    return _build_file_ctx(path, source, tree, repo_root), None
+
+
+def _classify_package(
+    file_ctxs: list[FileCtx],
+    func_taint: dict[int, set[str]],
+) -> list[dict[str, Any]]:
+    """Walk every Call in every file and emit findings using the final
+    per-function taint sets produced by `_analyze_package`.
+    """
     findings: list[dict[str, Any]] = []
+    for fc in file_ctxs:
+        parent: dict[int, ast.AST] = {}
+        for node in ast.walk(fc.tree):
+            for child in ast.iter_child_nodes(node):
+                parent[id(child)] = node
 
-    # Pre-compute per-function taint sets, including inter-procedural
-    # propagation across same-file call edges (fixed point, bounded).
-    func_taint: dict[int, set[str]] = _propagate_cross_function_taint(tree)
+        def _taint_for(call: ast.AST) -> set[str] | None:
+            current = parent.get(id(call))
+            while current is not None:
+                if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    return func_taint.get(id(current))
+                current = parent.get(id(current))
+            return None
 
-    # Build a child→parent map once so we can locate the enclosing function
-    # cheaply for each Call. Cheaper than re-walking the whole tree per call.
-    parent: dict[int, ast.AST] = {}
-    for node in ast.walk(tree):
-        for child in ast.iter_child_nodes(node):
-            parent[id(child)] = node
-
-    def _taint_for(call: ast.AST) -> set[str] | None:
-        current = parent.get(id(call))
-        while current is not None:
-            if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                return func_taint.get(id(current))
-            current = parent.get(id(current))
-        return None
-
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Call):
-            full = _full_name(node.func)
-            tail = full.split(".")[-1] if full else ""
-            tainted = _taint_for(node)
-            for cls, hyp in _classify_call(full, tail, node, source, tainted):
-                findings.append(
-                    {
-                        "file": rel_path,
-                        "line": node.lineno,
-                        "bug_class": cls,
-                        "hypothesis": hyp,
-                        "snippet": _snippet(source, node.lineno),
-                    }
-                )
+        for node in ast.walk(fc.tree):
+            if isinstance(node, ast.Call):
+                full = _full_name(node.func)
+                tail = full.split(".")[-1] if full else ""
+                tainted = _taint_for(node)
+                for cls, hyp in _classify_call(full, tail, node, fc.source, tainted):
+                    findings.append(
+                        {
+                            "file": fc.rel_path,
+                            "line": node.lineno,
+                            "bug_class": cls,
+                            "hypothesis": hyp,
+                            "snippet": _snippet(fc.source, node.lineno),
+                        }
+                    )
     return findings
+
+
+def scan_file(path: Path, *, repo_root: Path | None = None) -> list[dict[str, Any]]:
+    """Single-file analysis. Equivalent to `scan_files([path], repo_root=...)`
+    but tolerant of `repo_root=None` for ad-hoc one-shot use.
+    """
+    fc, err = _parse_for_scan(path, repo_root)
+    if err is not None:
+        return [err]
+    func_taint = _analyze_package([fc])
+    return _classify_package([fc], func_taint)
 
 
 def _classify_call(
@@ -524,10 +766,24 @@ def _classify_call(
     return out
 
 
-def scan_files(files: list[Path], *, repo_root: Path, max_files: int | None = None) -> list[dict[str, Any]]:
+def scan_files(
+    files: list[Path], *, repo_root: Path, max_files: int | None = None
+) -> list[dict[str, Any]]:
+    """Package-level analysis: parses every file first, builds the global
+    symbol table and per-file import maps, then runs the inter-procedural
+    taint fixed-point across the union of all functions.
+    """
+    selected = files if max_files is None else files[:max_files]
+    file_ctxs: list[FileCtx] = []
     findings: list[dict[str, Any]] = []
-    for i, path in enumerate(files):
-        if max_files is not None and i >= max_files:
-            break
-        findings.extend(scan_file(path, repo_root=repo_root))
+    for path in selected:
+        fc, err = _parse_for_scan(path, repo_root)
+        if err is not None:
+            findings.append(err)
+        else:
+            assert fc is not None
+            file_ctxs.append(fc)
+    if file_ctxs:
+        func_taint = _analyze_package(file_ctxs)
+        findings.extend(_classify_package(file_ctxs, func_taint))
     return findings
