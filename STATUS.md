@@ -54,12 +54,12 @@ subprocess).
 
 | Capability | Status | Evidence | Validation command | Known gaps / next |
 |---|---|---|---|---|
-| ZAP wrapper | partial | `cmd_scan_zap_baseline`, `cmd_scan_zap_full` in `tools/commands.py`; ROE-gated via `_authorize_scan` (`gates/authorization.py`) — requires `active_scan_allowed: true` for full-scan and rejects out-of-scope targets fail-closed before any subprocess | `python3 vapt/harness/harness.py tools-capability --json` ; `scope-check <run_dir> <url> --scanner zap-full` | Docker-gated; real-target validation pending. |
-| sqlmap wrapper | partial | `cmd_scan_sqlmap` in `tools/commands.py`; ROE-gated via `_authorize_scan` | `tools-capability --json` ; `scope-check <run_dir> <url> --scanner sqlmap` | Docker-gated; real-target validation pending. |
-| JWT tooling | partial | `cmd_scan_jwt` in `tools/commands.py`; ROE-gated via `_authorize_scan` | `tools-capability --json` ; `scope-check <run_dir> <url> --scanner jwt` | Docker-gated; real-target validation pending. |
-| Playwright screenshot | partial | `cmd_scan_screenshot` in `tools/commands.py`; ROE-gated via `_authorize_scan` | `tools-capability --json` ; `scope-check <run_dir> <url> --scanner screenshot` | Container-first; binary fallback. |
+| ZAP wrapper | implemented | `cmd_scan_zap_baseline`, `cmd_scan_zap_full` in `tools/commands.py`; ROE-gated via `_authorize_scan` (`gates/authorization.py`); validated end-to-end on 2026-06-01 against OWASP Juice Shop (`bkimminich/juice-shop:latest`), 600s timeout, 10 alerts surfaced (CSP missing, cross-domain misconfig, dangerous JS, header-policy gaps) | `python3 vapt/harness/harness.py scan-zap-baseline <run_dir> http://<in-scope-host>/ --network host --timeout 600` | Container-first via `ghcr.io/zaproxy/zaproxy:stable`. Active-scan variant requires `active_scan_allowed: true`. |
+| sqlmap wrapper | implemented | `cmd_scan_sqlmap` in `tools/commands.py`; ROE-gated; validated end-to-end on 2026-06-01 against OWASP Juice Shop's `/rest/products/search?q=` endpoint (no SQLi surfaced -> no false positive); `--prefer-local` flag added to bypass the docker runtime when the venv carries a working `sqlmap` (the deprecated `paoloo/sqlmap` manifest-v1 image is now rejected by Docker 29 / containerd v2.1 -- binary fallback is the supported path on those hosts) | `python3 vapt/harness/harness.py scan-sqlmap <run_dir> --target-url <url> --prefer-local --timeout 120` | Container path remains for hosts with a working modern sqlmap image; `--prefer-local` is the recommended path until the configured image is upgraded. |
+| JWT tooling | implemented | `cmd_scan_jwt` in `tools/commands.py`; ROE-gated; validated on 2026-06-01 (local decode + `ticarpi/jwt_tool` container both succeeded against a synthetic juice-shop-shaped token, decode JSON written) | `python3 vapt/harness/harness.py scan-jwt <run_dir> --token <jwt> --container --timeout 60` | Local decode always works; container path optional via `--container`. |
+| Playwright screenshot | implemented | `cmd_scan_screenshot` in `tools/commands.py`; ROE-gated; validated end-to-end on 2026-06-01 against OWASP Juice Shop (233KB PNG, rc=0); `--prefer-local` flag added (the published `mcr.microsoft.com/playwright/python:v1.45.0-jammy` image bundles browsers but not the Python `playwright` module, so the local venv install is the supported path until that gap is closed upstream). Local fallback now correctly resolves the venv interpreter that owns the playwright CLI. | `python3 vapt/harness/harness.py scan-screenshot <run_dir> <url> --prefer-local --timeout 60` | Container path remains for hosts with a self-built image that pre-installs the python module. |
 | Static scanners (semgrep/bandit/pip-audit/osv/codeql) | implemented | `cmd_scan_*` :10128–10224 | `tools-capability --json` | Read-only; lower ROE risk. |
-| Capability/health reporting | implemented | `tools-capability`, `tool-health` | `python3 vapt/harness/harness.py tools-capability --json` | Make Docker-vs-binary fallback state clearer (T4). |
+| Capability/health reporting | implemented | `tools-capability`, `tool-health`; `scan-sqlmap` and `scan-screenshot` expose `--prefer-local` so operators can explicitly route around a missing or broken container image without losing the wrapper's evidence-capture contract | `python3 vapt/harness/harness.py tools-capability --json` | — |
 
 ## Safety, structure, quality
 
@@ -75,9 +75,15 @@ subprocess).
 
 - **Implemented:** evidence-gated candidate lifecycle, authorized-target workflow,
   candidate ledger, dedup gate, report-readiness gate, orchestration spine, intent
-  ordering, GHSA discovery + claim, synthetic seeding.
-- **Partial:** outcome-tuned prioritization (no real data yet), source-reading
-  probes (single-statement, synthetic-validated), tool wrappers (wired, ungated).
+  ordering, GHSA discovery + claim, synthetic seeding, source acquisition,
+  AST walker (intra-function + same-file inter-procedural + same-class
+  self.method/self.attr + cross-file + non-self attribute + container aliasing,
+  validated against bottle / flask / werkzeug), ROE-gated tool wrappers
+  (ZAP, sqlmap, JWT, Playwright -- end-to-end against OWASP Juice Shop).
+- **Partial:** outcome-tuned prioritization (loop wired; terminal-submission
+  channel awaits real bounty rows -- the loop runs as soon as outcomes are
+  recorded), cross-platform support (atomic locks done; Windows CI matrix
+  not yet published).
 - **Future (not started):** logic-flaw 0day generation, protocol-state analysis,
   memory-corruption fuzzing, cryptographic-flaw discovery.
 

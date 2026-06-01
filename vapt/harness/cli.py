@@ -472,6 +472,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--timeout", type=int, default=900)
     p.add_argument("--network", default="bridge")
     p.add_argument("--extra", nargs="*")
+    p.add_argument(
+        "--prefer-local",
+        action="store_true",
+        help="force the local sqlmap binary even when a container runtime is available",
+    )
     p.set_defaults(func=_h.cmd_scan_sqlmap)
 
     p = sub.add_parser("scan-jwt", help="JWT decode + structural risk inspection (Move 3)")
@@ -488,6 +493,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--wait-ms", type=int, default=2000)
     p.add_argument("--network", default="bridge")
     p.add_argument("--timeout", type=int, default=120)
+    p.add_argument(
+        "--prefer-local",
+        action="store_true",
+        help="use the local playwright install even when a container runtime is available",
+    )
     p.set_defaults(func=_h.cmd_scan_screenshot)
 
     p = sub.add_parser("scope-check", help="dry-run the fail-closed scope/ROE gate for a target_url without scanning")

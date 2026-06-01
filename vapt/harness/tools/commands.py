@@ -178,7 +178,18 @@ def cmd_scan_sqlmap(args: argparse.Namespace) -> None:
     base = tool_scan_base(run_dir, 'sqlmap')
     out_dir = base.parent
     runtime, local_bin = _ensure_runtime_or_local('sqlmap', 'sqlmap', base, f'install Docker/Podman to pull {sqlmap_mod.SQLMAP_IMAGE} or `pip install sqlmap` into .venv-vapt')
-    if runtime:
+    # Prefer the local binary when `--prefer-local` is set OR when only the
+    # local binary is available. Otherwise fall back to docker-runtime.
+    use_local = getattr(args, 'prefer_local', False) or (not runtime and local_bin)
+    if use_local and local_bin:
+        argv = [local_bin, '--batch', '--random-agent', '--output-dir', str(out_dir)]
+        if args.target_url:
+            argv += ['-u', args.target_url]
+        if args.request_file:
+            argv += ['-r', args.request_file]
+        if args.extra:
+            argv += list(args.extra)
+    elif runtime:
         argv = sqlmap_mod.scan_argv(runtime, target_url=args.target_url, request_file=Path(args.request_file) if args.request_file else None, out_dir=out_dir, extra_args=args.extra or [], network=args.network)
     else:
         argv = [local_bin, '--batch', '--random-agent', '--output-dir', str(out_dir)]
@@ -223,10 +234,21 @@ def cmd_scan_screenshot(args: argparse.Namespace) -> None:
     runtime, local_bin = _ensure_runtime_or_local('screenshot', 'playwright', base, f'install Docker/Podman to pull {shot_mod.PLAYWRIGHT_IMAGE} or install playwright in .venv-vapt')
     script_path = shot_mod.write_capture_script(out_dir)
     image_name = f'{base.name}.png'
-    if runtime:
+    # Prefer the local interpreter when --prefer-local is set OR when only
+    # the local playwright CLI is available. Fall back to docker runtime.
+    use_local = getattr(args, 'prefer_local', False) or (not runtime and local_bin)
+    if use_local and local_bin:
+        # `local_bin` is the playwright CLI; the capture script needs the
+        # python interpreter that has the playwright module importable.
+        # Use the venv that owns the CLI binary (its `bin/python` sits next
+        # to `bin/playwright`).
+        venv_python = str(Path(local_bin).resolve().parent / 'python')
+        argv = [venv_python, str(script_path), args.target_url, str(out_dir / image_name), str(args.wait_ms)]
+    elif runtime:
         argv = shot_mod.capture_argv(runtime, target_url=args.target_url, out_dir=out_dir, script_path=script_path, image_name=image_name, wait_ms=args.wait_ms, network=args.network)
     else:
-        argv = [local_bin, 'python', str(script_path), args.target_url, str(out_dir / image_name), str(args.wait_ms)]
+        venv_python = str(Path(local_bin).resolve().parent / 'python')
+        argv = [venv_python, str(script_path), args.target_url, str(out_dir / image_name), str(args.wait_ms)]
     result = run_tool_scan(argv, ROOT, base, args.timeout, env=tool_env('playwright'))
     summary = {'image': rel(out_dir / image_name), 'url': args.target_url}
     write_json(base.with_suffix('.findings.json'), summary)
