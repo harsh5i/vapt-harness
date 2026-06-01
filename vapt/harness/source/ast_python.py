@@ -56,13 +56,29 @@ UNTRUSTED_VAR_HINTS = {
 }
 
 
+def _attr_path(node: ast.AST) -> str | None:
+    """Dotted path of a pure Name/Attribute chain, e.g. `self.path` or
+    `self.req.body`. Returns None if any segment is a Call, Subscript, etc.
+    """
+    parts: list[str] = []
+    cur = node
+    while isinstance(cur, ast.Attribute):
+        parts.append(cur.attr)
+        cur = cur.value
+    if isinstance(cur, ast.Name):
+        parts.append(cur.id)
+        return ".".join(reversed(parts))
+    return None
+
+
 def _is_untrusted_name(node: ast.AST, tainted: set[str] | None = None) -> bool:
     """Does this expression reference a likely-untrusted variable?
 
     Checks both the static hint vocabulary (`request`, `args`, ...) and the
     optional `tainted` set (locals previously assigned from untrusted-shaped
-    sources). With `tainted=None` the walker behaves exactly like the
-    original single-statement check.
+    sources, plus dotted paths like `self.X` for attribute taint).
+    With `tainted=None` the walker behaves exactly like the original
+    single-statement check.
     """
     for sub in ast.walk(node):
         if isinstance(sub, ast.Name):
@@ -75,6 +91,10 @@ def _is_untrusted_name(node: ast.AST, tainted: set[str] | None = None) -> bool:
                 return True
             if isinstance(sub.value, ast.Name) and sub.value.id.lower() in UNTRUSTED_VAR_HINTS:
                 return True
+            if tainted is not None:
+                path = _attr_path(sub)
+                if path is not None and path in tainted:
+                    return True
     return False
 
 
@@ -99,7 +119,14 @@ def _full_name(node: ast.AST) -> str:
 
 
 def _assign_targets(node: ast.AST) -> list[str]:
-    """Yield Name targets from an Assign / AugAssign / AnnAssign LHS."""
+    """Yield target identifiers from an Assign / AugAssign / AnnAssign LHS.
+
+    Returns:
+    - plain Name targets as their identifier
+    - Attribute targets rooted at `self` as their dotted path (e.g.
+      `self.path`, `self.req.body`)
+    - tuple / list unpack elements (Names only)
+    """
     names: list[str] = []
     targets: list[ast.AST] = []
     if isinstance(node, ast.Assign):
@@ -111,6 +138,10 @@ def _assign_targets(node: ast.AST) -> list[str]:
     for t in targets:
         if isinstance(t, ast.Name):
             names.append(t.id)
+        elif isinstance(t, ast.Attribute):
+            path = _attr_path(t)
+            if path is not None and path.startswith("self."):
+                names.append(path)
         elif isinstance(t, (ast.Tuple, ast.List)):
             for elt in t.elts:
                 if isinstance(elt, ast.Name):
@@ -202,56 +233,114 @@ def _all_param_names(func: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
     return {a.arg for a in func.args.posonlyargs + func.args.args + func.args.kwonlyargs}
 
 
+def _is_method(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    params = fn.args.posonlyargs + fn.args.args
+    return bool(params) and params[0].arg == "self"
+
+
 def _propagate_cross_function_taint(
     tree: ast.AST, *, max_iters: int = 6
 ) -> dict[int, set[str]]:
     """Fixed-point inter-procedural taint within one file.
 
-    Returns a map func-id -> tainted local names. Callers passing tainted
-    args into local functions extend the callee's seed; returning a
-    tainted expression marks that function as returning tainted. Bounded
-    by max_iters to terminate on mutual recursion.
+    Returns a map func-id -> tainted local names + dotted attribute paths
+    (e.g. `self.path`). Propagation covers:
+
+    - free-function calls: `helper(x)` -> `helper`'s param taint
+    - method calls via self: `self.helper(x)` resolves to the enclosing
+      class's method of that name; positional args shift by 1 to skip self
+    - tainted-return: any assignment whose RHS calls a function known to
+      return tainted becomes tainted on the LHS
+    - self.attr taint: `self.X = tainted` in any method of class C marks
+      `self.X` tainted across every method of C (flow-insensitive)
+
+    Bounded by max_iters to terminate on mutual recursion.
     """
     funcs_by_name: dict[str, ast.AST] = {}
     all_funcs: list[ast.FunctionDef | ast.AsyncFunctionDef] = []
+    classes: list[ast.ClassDef] = []
+    class_of_func: dict[int, ast.ClassDef] = {}
+    class_methods: dict[int, dict[str, ast.FunctionDef | ast.AsyncFunctionDef]] = {}
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef):
+            classes.append(node)
+            methods: dict[str, ast.FunctionDef | ast.AsyncFunctionDef] = {}
+            for sub in node.body:
+                if isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    methods[sub.name] = sub
+                    class_of_func[id(sub)] = node
+            class_methods[id(node)] = methods
+
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             all_funcs.append(node)
-            funcs_by_name[node.name] = node  # last def wins on shadowing
+            # Only register as a free function if it is module-level (not a
+            # method of any class). Last def wins on shadowing.
+            if id(node) not in class_of_func:
+                funcs_by_name[node.name] = node
 
-    seed: dict[int, set[str]] = {id(fn): _initial_seed(fn) for fn in all_funcs}
+    # Per-class self-attribute taint (flow-insensitive).
+    class_self_taint: dict[int, set[str]] = {id(c): set() for c in classes}
+
+    def _seed_with_class(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
+        base = _initial_seed(fn)
+        cls = class_of_func.get(id(fn))
+        if cls is not None:
+            base |= class_self_taint[id(cls)]
+        return base
+
+    seed: dict[int, set[str]] = {id(fn): _seed_with_class(fn) for fn in all_funcs}
     tainted_returns: set[int] = set()
     local_taint: dict[int, set[str]] = {
         id(fn): _function_taint(fn, seed[id(fn)], funcs_by_name, tainted_returns)
         for fn in all_funcs
     }
 
+    def _resolve_self_method(
+        call: ast.Call, caller: ast.FunctionDef | ast.AsyncFunctionDef
+    ) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
+        if not (isinstance(call.func, ast.Attribute)
+                and isinstance(call.func.value, ast.Name)
+                and call.func.value.id == "self"):
+            return None
+        cls = class_of_func.get(id(caller))
+        if cls is None:
+            return None
+        return class_methods[id(cls)].get(call.func.attr)
+
     for _ in range(max_iters):
         changed = False
 
-        # Propagate taint across call edges.
+        # Propagate taint across call edges (free functions + self.method).
         for caller in all_funcs:
             caller_taint = local_taint[id(caller)]
             for sub in ast.walk(caller):
                 if not isinstance(sub, ast.Call):
                     continue
                 callee = _resolved_callee(sub, funcs_by_name)
+                positional_offset = 0
+                if callee is None:
+                    callee = _resolve_self_method(sub, caller)
+                    # For self.method() the positional args start at param
+                    # index 1 (self is implicit).
+                    if callee is not None:
+                        positional_offset = 1
                 if callee is None:
                     continue
                 positional = _positional_param_names(callee)
                 all_params = _all_param_names(callee)
-                # positional args by index
                 for i, arg in enumerate(sub.args):
-                    if i >= len(positional):
+                    target_idx = i + positional_offset
+                    if target_idx >= len(positional):
                         break
                     if (
                         _is_untrusted_name(arg, caller_taint)
                         or _expr_calls_tainted_returner(arg, funcs_by_name, tainted_returns)
                     ):
-                        if positional[i] not in seed[id(callee)]:
-                            seed[id(callee)].add(positional[i])
+                        if positional[target_idx] not in seed[id(callee)]:
+                            seed[id(callee)].add(positional[target_idx])
                             changed = True
-                # keyword args by name
                 for kw in sub.keywords:
                     if kw.arg is None or kw.arg not in all_params:
                         continue
@@ -264,11 +353,30 @@ def _propagate_cross_function_taint(
                             changed = True
 
         # Recompute local taint with updated seeds + return-taint awareness.
+        # Fold any newly-discovered class self-taint into the seed without
+        # discarding prior arg-edge propagation.
         for fn in all_funcs:
+            cls = class_of_func.get(id(fn))
+            if cls is not None:
+                new_seed = seed[id(fn)] | class_self_taint[id(cls)]
+                if new_seed != seed[id(fn)]:
+                    seed[id(fn)] = new_seed
+                    changed = True
             new_t = _function_taint(fn, seed[id(fn)], funcs_by_name, tainted_returns)
             if new_t != local_taint[id(fn)]:
                 local_taint[id(fn)] = new_t
                 changed = True
+
+        # Lift any `self.X` taint discovered in a method up to the class's
+        # shared set so other methods inherit it on the next iteration.
+        for fn in all_funcs:
+            cls = class_of_func.get(id(fn))
+            if cls is None:
+                continue
+            for entry in local_taint[id(fn)]:
+                if entry.startswith("self.") and entry not in class_self_taint[id(cls)]:
+                    class_self_taint[id(cls)].add(entry)
+                    changed = True
 
         # Detect tainted returns.
         for fn in all_funcs:

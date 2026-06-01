@@ -250,6 +250,106 @@ def entry(request):
     assert any(f["line"] == 4 for f in pt), f"expected line 4 flagged, got {pt}"
 
 
+# --- self.method() dispatch + self.attr taint (same class) -----------------
+
+
+def test_self_method_called_with_tainted_arg_flags(tmp_path):
+    # self.helper(tainted) -> helper's open(p) must flag.
+    body = """
+class Handler:
+    def helper(self, p):
+        return open(p, 'rb')
+    def serve(self, request):
+        return self.helper(request.args.get('x'))
+"""
+    findings = _scan(tmp_path, body)
+    pt = [f for f in findings if f["bug_class"] == "path_traversal_unguarded_join"]
+    # open(p) inside helper is at line 4
+    assert any(f["line"] == 4 for f in pt), f"expected line 4 flagged, got {pt}"
+
+
+def test_self_method_called_with_literal_does_not_flag(tmp_path):
+    body = """
+class Handler:
+    def helper(self, p):
+        return open(p, 'rb')
+    def serve(self):
+        return self.helper('/etc/passwd')
+"""
+    findings = _scan(tmp_path, body)
+    pt = [f for f in findings if f["bug_class"] == "path_traversal_unguarded_join"]
+    assert pt == [], f"helper called only with literal must not flag, got {pt}"
+
+
+def test_self_attribute_assigned_tainted_and_used_in_same_method_flags(tmp_path):
+    # self.path = tainted ... open(self.path) within one method.
+    body = """
+class View:
+    def post(self, request):
+        self.path = request.args.get('x')
+        return open(self.path, 'rb')
+"""
+    findings = _scan(tmp_path, body)
+    pt = [f for f in findings if f["bug_class"] == "path_traversal_unguarded_join"]
+    # open(self.path) is at line 5
+    assert any(f["line"] == 5 for f in pt), f"expected line 5 flagged, got {pt}"
+
+
+def test_self_attribute_taint_persists_across_methods_in_class(tmp_path):
+    # Flow-insensitive: any method tainting self.X means self.X is treated
+    # as tainted in every method of that class.
+    body = """
+class View:
+    def post(self, request):
+        self.path = request.args.get('x')
+
+    def render(self):
+        return open(self.path, 'rb')
+"""
+    findings = _scan(tmp_path, body)
+    pt = [f for f in findings if f["bug_class"] == "path_traversal_unguarded_join"]
+    # open(self.path) is at line 7
+    assert any(f["line"] == 7 for f in pt), f"expected line 7 flagged, got {pt}"
+
+
+def test_self_attribute_untainted_does_not_flag(tmp_path):
+    body = """
+class View:
+    def __init__(self):
+        self.path = '/var/data/file.txt'
+    def render(self):
+        return open(self.path, 'rb')
+"""
+    findings = _scan(tmp_path, body)
+    pt = [f for f in findings if f["bug_class"] == "path_traversal_unguarded_join"]
+    assert pt == [], f"untainted self.attr must not flag, got {pt}"
+
+
+def test_self_method_does_not_resolve_to_other_class(tmp_path):
+    # Same method name in two unrelated classes: taint inside class A's
+    # helper must not bleed into class B's helper.
+    body = """
+class A:
+    def helper(self, p):
+        return open(p, 'rb')
+    def serve(self, request):
+        return self.helper(request.args.get('x'))
+
+class B:
+    def helper(self, p):
+        return open(p, 'rb')
+    def safe(self):
+        return self.helper('/etc/hostname')
+"""
+    findings = _scan(tmp_path, body)
+    pt = [f for f in findings if f["bug_class"] == "path_traversal_unguarded_join"]
+    # A.helper's open at line 4 should flag.
+    # B.helper's open at line 10 should NOT flag (only called with literal).
+    lines = sorted(f["line"] for f in pt)
+    assert 4 in lines, f"expected A.helper line 4 flagged, got {lines}"
+    assert 10 not in lines, f"B.helper line 10 must not flag (literal-only callers), got {lines}"
+
+
 # --- regression on existing seeded fixtures --------------------------------
 
 
