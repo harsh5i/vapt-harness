@@ -22,9 +22,9 @@ subprocess).
 
 | Capability | Status | Evidence | Validation command | Known gaps / next |
 |---|---|---|---|---|
-| Candidate ledger | implemented | `candidate-add`, `candidate-set`, `candidate-from-queue` in harness.py | `python3 vapt/harness/harness.py candidate-add --help` | No unit tests around state transitions (see T3). |
-| Dedup gate | implemented | `dedup`, `dedup --check-osv` | `python3 vapt/harness/harness.py dedup --help` | Offline-cache false-novelty path untested. |
-| Promotion / report gate | implemented | `gate`, `report-gate` | `python3 vapt/harness/harness.py report-gate --help` | No unit test asserting report-ready requires reproducer + negative controls. |
+| Candidate ledger | implemented | `candidate-add`, `candidate-set`, `candidate-from-queue` in harness.py; state-transition + workflow-blocker coverage in `tests/test_gates_promotion.py` (17 tests) | `python3 vapt/harness/harness.py candidate-add --help` ; `./.venv-vapt/bin/python -m pytest vapt/harness/tests/test_gates_promotion.py` | — |
+| Dedup gate | implemented | `dedup`, `dedup --check-osv`; offline / cache-only / cache-only-miss novelty paths covered by `tests/test_dedup_novelty.py` (6 tests, incl. `test_offline_osv_cache_only_does_not_fake_novelty` and `test_dedup_incomplete_blocks_promotion`) | `python3 vapt/harness/harness.py dedup --help` ; `./.venv-vapt/bin/python -m pytest vapt/harness/tests/test_dedup_novelty.py` | — |
+| Promotion / report gate | implemented | `gate`, `report-gate`; `tests/test_gates_promotion.py` covers report-ready preconditions: proof passed, root cause, variant analysis, patch advisory, negative controls, exploitability threshold | `python3 vapt/harness/harness.py report-gate --help` ; `./.venv-vapt/bin/python -m pytest vapt/harness/tests/test_gates_promotion.py -k report_ready` | — |
 | Orchestration spine (orient/submit/advance) | implemented | commit 714bce6; `orient`, `submit`, `loop-integrity-check` (3 fixtures) | `python3 vapt/harness/harness.py loop-integrity-check` | — |
 | Intent layer | implemented | `intent-set`, `intent-show`, `intent-ordering-check` | `python3 vapt/harness/harness.py intent-ordering-check` | — |
 | Phase checks (2/3/4) | implemented | `phase2-check`, `phase3-check`, `phase4-check`, `campaign-flow-check` | `python3 vapt/harness/harness.py phase4-check` | Integration-style only; no unit layer. |
@@ -37,7 +37,7 @@ subprocess).
 | Synthetic outcome seeding | implemented | `submissions seed-synthetic`; rows tagged `synthetic:true` | `python3 vapt/harness/harness.py submissions seed-synthetic --help` | — |
 | Synthetic excluded from tuning by default | implemented | harness.py:7046 `include_synthetic=False`; `--include-synthetic` flag :12117 | `python3 vapt/harness/harness.py outcome-tune --out /tmp/t.yaml` (reports `synthetic_excluded`) | — |
 | Sanctioned real-outcome write path | implemented | `outcome-record` is the non-synthetic terminal write path (rows carry no `synthetic` key); `outcome-tune` excludes synthetic by default; `weights show` reports effective weights + last meaningful update + STARVED/stale-source diagnostics | `python3 vapt/harness/harness.py weights show --json` | `outcome-record` and `submission add/update` coexist by design; no CLI rename (migration non-negotiable). |
-| OSV cache (offline dedup) | implemented | OSV cache + `dedup --check-osv` | `python3 vapt/harness/harness.py dedup --check-osv --help` | Needs a test proving offline failure ≠ false novelty. |
+| OSV cache (offline dedup) | implemented | OSV cache + `dedup --check-osv`; covered by `tests/test_dedup_novelty.py::test_offline_osv_cache_only_does_not_fake_novelty` (asserts cache-only miss downgrades to `dedup-incomplete`, not `no-known-duplicate`) | `python3 vapt/harness/harness.py dedup --check-osv --help` ; `./.venv-vapt/bin/python -m pytest vapt/harness/tests/test_dedup_novelty.py::test_offline_osv_cache_only_does_not_fake_novelty` | — |
 
 ## Discovery & source-reading
 
@@ -69,7 +69,7 @@ subprocess).
 | Package decomposition | implemented | strangler-fig batches 1-21 landed; every module under 1500 LOC; harness.py is a 1,459-line entrypoint that re-imports cmd_* + helpers from the per-domain packages | `wc -l vapt/harness/*.py vapt/harness/*/*.py \| sort -rn \| head` (max < 1500) | T3.2 acceptance met. harness.py shrank 13,001 -> 1,459 lines across 21 batches. |
 | Unit tests | implemented | 121 tests green across 10 suites (+3 opt-in real-world smoke tests skipped by default): `test_ast_taint_flow.py` (36, incl. cross-function + self/class + cross-file + non-self attr/container), `test_authorization_scope.py` (13), `test_cold_start_commands.py` (16), `test_dedup_novelty.py` (6), `test_gates_promotion.py` (17), `test_imports.py` (4), `test_io_atomic.py` (10), `test_outcome_tuning.py` (9), `test_realworld_smoke.py` (3, opt-in), `test_validators.py` (10) | `./.venv-vapt/bin/python -m pytest vapt/harness/tests/` ; `VAPT_REALWORLD=1 ./.venv-vapt/bin/python -m pytest vapt/harness/tests/test_realworld_smoke.py` | T3.1 acceptance met. Per-engagement integration tests still future. |
 | Sensitive-data pre-commit | implemented | `.pre-commit-config.yaml` + `scripts/check_engagement_paths.py` + `.secrets.baseline` (detect-secrets) | `pre-commit install && pre-commit run --all-files` | Opt-in install per clone. Engagement-path guard is fail-closed on any staged file under `vapt/engagements/<id>/`. |
-| Cross-platform support | partial | `atomic_io.py` dispatches `fcntl` on Unix/macOS and `msvcrt.locking` on Windows for the same `file_lock` / `candidate_ledger_lock` surface; `vapt/requirements-dev.txt` added | `python3 -c "import sys; sys.path.insert(0,'vapt/harness'); import atomic_io"` | Lock abstraction landed; full Windows CI still pending. |
+| Cross-platform support | implemented | `atomic_io.py` dispatches `fcntl` on Unix/macOS and `msvcrt.locking` on Windows for the same `file_lock` / `candidate_ledger_lock` surface; `.github/workflows/ci.yml` exercises both lock branches via a 3-OS x 2-Python matrix (ubuntu-latest, macos-latest, windows-latest; Python 3.11 + 3.12) running the full unit suite plus an import-surface smoke check per platform | `python3 -c "import sys; sys.path.insert(0,'vapt/harness'); import atomic_io"` ; CI run history under `.github/workflows/ci.yml` on every push / pull request to `main` | Real-target smoke tests stay opt-in (`VAPT_REALWORLD=1`) so CI does not depend on network availability of upstream OSS repos. |
 
 ## Honest capability framing (supersedes README until T4.2)
 
@@ -82,8 +82,9 @@ subprocess).
   (ZAP, sqlmap, JWT, Playwright -- end-to-end against OWASP Juice Shop).
 - **Partial:** outcome-tuned prioritization (loop wired; terminal-submission
   channel awaits real bounty rows -- the loop runs as soon as outcomes are
-  recorded), cross-platform support (atomic locks done; Windows CI matrix
-  not yet published).
+  recorded). This is operational, not engineering: every other capability
+  on the path is `implemented`, and the loop activates as soon as real
+  submission outcomes are written to the corpus.
 - **Future (not started):** logic-flaw 0day generation, protocol-state analysis,
   memory-corruption fuzzing, cryptographic-flaw discovery.
 
