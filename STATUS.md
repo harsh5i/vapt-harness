@@ -33,7 +33,7 @@ subprocess).
 
 | Capability | Status | Evidence | Validation command | Known gaps / next |
 |---|---|---|---|---|
-| Outcome-tuning loop | implemented | `outcome-tune` computes `weakness_adjustments` from terminal submission outcomes + triage verdicts (false_positive / defended / needs_proof). Wired through `_score_candidate`, bounded [-6, 6]. Synthetic rows excluded by default. | `python3 vapt/harness/harness.py weights show --json` ; `python3 vapt/harness/harness.py outcome-tune --out /tmp/t.yaml` | A fresh clone has no real outcomes (`weights show` reports `STARVED`). Synthetic seeding (`submissions seed-synthetic`) lets you exercise the loop without operational data. |
+| Outcome-tuning loop | implemented | `outcome-tune` computes `weakness_adjustments` from terminal submission outcomes + triage verdicts (false_positive / defended / needs_proof). Wired through `_score_candidate`, bounded [-6, 6]. Synthetic rows excluded by default. Batch real-outcome ingest path: `scripts/outcome_ingest.py --csv <file>` reads a paste-friendly CSV (or `--json <list>`), normalises aliases (`id`/`report_id`/`verdict`/`state`/`bounty` map to the canonical flags), validates each row, dispatches `cmd_outcome_record` per row, then runs `cmd_outcome_tune`. 13 unit tests under `tests/test_outcome_ingest.py` cover the normaliser + validator + namespace contract. | `python3 vapt/harness/harness.py weights show --json` ; `python3 vapt/harness/harness.py outcome-tune --out /tmp/t.yaml` ; `python3 scripts/outcome_ingest.py --csv outcomes.csv` | A fresh clone has no real outcomes (`weights show` reports `STARVED`). Use `submissions seed-synthetic` to exercise the loop without operational data, or `scripts/outcome_ingest.py` once real triage verdicts arrive. The loop activates the moment terminal outcomes land in `corpus/submissions.jsonl`. |
 | Synthetic outcome seeding | implemented | `submissions seed-synthetic`; rows tagged `synthetic:true` | `python3 vapt/harness/harness.py submissions seed-synthetic --help` | — |
 | Synthetic excluded from tuning by default | implemented | harness.py:7046 `include_synthetic=False`; `--include-synthetic` flag :12117 | `python3 vapt/harness/harness.py outcome-tune --out /tmp/t.yaml` (reports `synthetic_excluded`) | — |
 | Sanctioned real-outcome write path | implemented | `outcome-record` is the non-synthetic terminal write path (rows carry no `synthetic` key); `outcome-tune` excludes synthetic by default; `weights show` reports effective weights + last meaningful update + STARVED/stale-source diagnostics | `python3 vapt/harness/harness.py weights show --json` | `outcome-record` and `submission add/update` coexist by design; no CLI rename (migration non-negotiable). |
@@ -80,11 +80,14 @@ subprocess).
   self.method/self.attr + cross-file + non-self attribute + container aliasing,
   validated against bottle / flask / werkzeug), ROE-gated tool wrappers
   (ZAP, sqlmap, JWT, Playwright -- end-to-end against OWASP Juice Shop).
-- **Partial:** outcome-tuned prioritization (loop wired; terminal-submission
-  channel awaits real bounty rows -- the loop runs as soon as outcomes are
-  recorded). This is operational, not engineering: every other capability
-  on the path is `implemented`, and the loop activates as soon as real
-  submission outcomes are written to the corpus.
+- **Partial:** outcome-tuned prioritization (loop + batch ingest helper
+  wired; terminal-submission channel awaits real bounty rows --
+  `scripts/outcome_ingest.py` accepts the paste-friendly CSV/JSON the
+  operator pulls from their bounty platform and runs the full
+  `outcome-record + outcome-tune` cycle in one shot). This is operational,
+  not engineering: every capability on the path is `implemented`, and the
+  loop activates the moment terminal outcomes land in
+  `corpus/submissions.jsonl`.
 - **Future (not started):** logic-flaw 0day generation, protocol-state analysis,
   memory-corruption fuzzing, cryptographic-flaw discovery.
 
