@@ -123,8 +123,11 @@ def _assign_targets(node: ast.AST) -> list[str]:
 
     Returns:
     - plain Name targets as their identifier
-    - Attribute targets rooted at `self` as their dotted path (e.g.
-      `self.path`, `self.req.body`)
+    - Attribute targets rooted at any Name as their dotted path (e.g.
+      `self.path`, `cfg.req.body`)
+    - Subscript targets as the container's dotted path (e.g. `cache` from
+      `cache['k'] = ...`); this models the conservative invariant that
+      "writing tainted into any slot of a container taints the container"
     - tuple / list unpack elements (Names only)
     """
     names: list[str] = []
@@ -140,13 +143,59 @@ def _assign_targets(node: ast.AST) -> list[str]:
             names.append(t.id)
         elif isinstance(t, ast.Attribute):
             path = _attr_path(t)
-            if path is not None and path.startswith("self."):
+            if path is not None:
                 names.append(path)
+        elif isinstance(t, ast.Subscript):
+            # `c[k] = tainted` taints c. Resolve the container path so
+            # nested forms like `obj.cache['k'] = ...` taint `obj.cache`.
+            container_path: str | None = None
+            if isinstance(t.value, ast.Name):
+                container_path = t.value.id
+            elif isinstance(t.value, ast.Attribute):
+                container_path = _attr_path(t.value)
+            if container_path is not None:
+                names.append(container_path)
         elif isinstance(t, (ast.Tuple, ast.List)):
             for elt in t.elts:
                 if isinstance(elt, ast.Name):
                     names.append(elt.id)
     return names
+
+
+# Container methods that introduce taint into their receiver when called
+# with a tainted argument. Conservative; covers list, set, dict, deque.
+_TAINTING_CONTAINER_METHODS: frozenset[str] = frozenset({
+    "append", "extend", "insert", "add", "update", "setdefault", "appendleft",
+})
+
+
+def _container_mutation_taints_receiver(
+    stmt_value: ast.AST, tainted: set[str]
+) -> str | None:
+    """If `stmt_value` is `<container>.method(tainted_arg, ...)` and method
+    is in the tainting set, return the container's dotted path; else None.
+    """
+    if not isinstance(stmt_value, ast.Call):
+        return None
+    func = stmt_value.func
+    if not isinstance(func, ast.Attribute):
+        return None
+    if func.attr not in _TAINTING_CONTAINER_METHODS:
+        return None
+    container_path: str | None = None
+    if isinstance(func.value, ast.Name):
+        container_path = func.value.id
+    elif isinstance(func.value, ast.Attribute):
+        container_path = _attr_path(func.value)
+    if container_path is None:
+        return None
+    for arg in stmt_value.args:
+        if _is_untrusted_name(arg, tainted):
+            return container_path
+    for kw in stmt_value.keywords:
+        if _is_untrusted_name(kw.value, tainted):
+            return container_path
+    return None
 
 
 def _initial_seed(func: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
@@ -273,24 +322,55 @@ def _function_taint(
       or cross-file via the caller file's import maps).
     """
     tainted: set[str] = set(seed)
-    for stmt in ast.walk(func):
-        if isinstance(stmt, (ast.Assign, ast.AnnAssign)):
-            rhs = stmt.value
-            if rhs is None:
-                continue
-            if (
-                _is_untrusted_name(rhs, tainted)
-                or _expr_calls_tainted_returner(rhs, fc, global_funcs, tainted_returns)
-            ):
-                for name in _assign_targets(stmt):
-                    tainted.add(name)
-        elif isinstance(stmt, ast.AugAssign):
-            if (
-                _is_untrusted_name(stmt.value, tainted)
-                or _expr_calls_tainted_returner(stmt.value, fc, global_funcs, tainted_returns)
-            ):
-                for name in _assign_targets(stmt):
-                    tainted.add(name)
+    # Iterate to a fixed point so that taint introduced by a container
+    # mutation (`items.append(tainted)`) is visible to a later sink read
+    # in the same function, regardless of textual order in ast.walk.
+    for _ in range(8):
+        added = False
+        for stmt in ast.walk(func):
+            if isinstance(stmt, (ast.Assign, ast.AnnAssign)):
+                rhs = stmt.value
+                if rhs is None:
+                    continue
+                if (
+                    _is_untrusted_name(rhs, tainted)
+                    or _expr_calls_tainted_returner(rhs, fc, global_funcs, tainted_returns)
+                ):
+                    for name in _assign_targets(stmt):
+                        if name not in tainted:
+                            tainted.add(name)
+                            added = True
+            elif isinstance(stmt, ast.AugAssign):
+                if (
+                    _is_untrusted_name(stmt.value, tainted)
+                    or _expr_calls_tainted_returner(stmt.value, fc, global_funcs, tainted_returns)
+                ):
+                    for name in _assign_targets(stmt):
+                        if name not in tainted:
+                            tainted.add(name)
+                            added = True
+            elif isinstance(stmt, ast.Expr):
+                # `lst.append(tainted)`, `s.add(tainted)`, `d.update(...)`
+                container = _container_mutation_taints_receiver(stmt.value, tainted)
+                if container is not None and container not in tainted:
+                    tainted.add(container)
+                    added = True
+            elif isinstance(stmt, (ast.For, ast.AsyncFor)):
+                # `for x in tainted_container` taints x.
+                if (
+                    _is_untrusted_name(stmt.iter, tainted)
+                    or _expr_calls_tainted_returner(stmt.iter, fc, global_funcs, tainted_returns)
+                ):
+                    if isinstance(stmt.target, ast.Name) and stmt.target.id not in tainted:
+                        tainted.add(stmt.target.id)
+                        added = True
+                    elif isinstance(stmt.target, (ast.Tuple, ast.List)):
+                        for elt in stmt.target.elts:
+                            if isinstance(elt, ast.Name) and elt.id not in tainted:
+                                tainted.add(elt.id)
+                                added = True
+        if not added:
+            break
     return tainted
 
 

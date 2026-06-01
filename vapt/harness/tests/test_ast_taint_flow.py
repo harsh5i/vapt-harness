@@ -475,6 +475,93 @@ def test_cross_file_stdlib_does_not_resolve(tmp_path):
     assert findings == [], f"expected no findings, got {findings}"
 
 
+# --- non-self attribute taint ----------------------------------------------
+
+
+def test_non_self_attribute_assign_then_used_flags(tmp_path):
+    # cfg.path = tainted ... open(cfg.path) should flag (cfg is a plain
+    # local, not self).
+    body = """
+def serve(request):
+    cfg = object()
+    cfg.path = request.args.get('x')
+    return open(cfg.path, 'rb')
+"""
+    findings = _scan(tmp_path, body)
+    pt = [f for f in findings if f["bug_class"] == "path_traversal_unguarded_join"]
+    # open(cfg.path) is at line 5
+    assert any(f["line"] == 5 for f in pt), f"expected line 5 flagged, got {pt}"
+
+
+def test_non_self_attribute_untainted_does_not_flag(tmp_path):
+    body = """
+def serve():
+    cfg = object()
+    cfg.path = '/var/data/file.txt'
+    return open(cfg.path, 'rb')
+"""
+    findings = _scan(tmp_path, body)
+    pt = [f for f in findings if f["bug_class"] == "path_traversal_unguarded_join"]
+    assert pt == [], f"untainted obj.attr must not flag, got {pt}"
+
+
+# --- container aliasing ----------------------------------------------------
+
+
+def test_list_append_taints_then_subscript_read_flags(tmp_path):
+    body = """
+def serve(request):
+    items = []
+    items.append(request.args.get('x'))
+    return open(items[0], 'rb')
+"""
+    findings = _scan(tmp_path, body)
+    pt = [f for f in findings if f["bug_class"] == "path_traversal_unguarded_join"]
+    # open(items[0]) is at line 5
+    assert any(f["line"] == 5 for f in pt), f"expected line 5 flagged, got {pt}"
+
+
+def test_dict_subscript_assign_taints_then_read_flags(tmp_path):
+    body = """
+def serve(request):
+    cache = {}
+    cache['p'] = request.args.get('x')
+    return open(cache['p'], 'rb')
+"""
+    findings = _scan(tmp_path, body)
+    pt = [f for f in findings if f["bug_class"] == "path_traversal_unguarded_join"]
+    assert any(f["line"] == 5 for f in pt), f"expected line 5 flagged, got {pt}"
+
+
+def test_set_add_taints_container(tmp_path):
+    body = """
+def serve(request):
+    seen = set()
+    seen.add(request.args.get('x'))
+    for item in seen:
+        return open(item, 'rb')
+"""
+    findings = _scan(tmp_path, body)
+    pt = [f for f in findings if f["bug_class"] == "path_traversal_unguarded_join"]
+    # The loop var `item` is taken from `seen` which is tainted; current
+    # walker treats `for x in tainted_container` as taint-introducing.
+    assert any(f["bug_class"] == "path_traversal_unguarded_join" for f in pt), (
+        f"expected set-add taint to reach sink via for-loop, got {pt}"
+    )
+
+
+def test_list_with_literal_append_does_not_flag(tmp_path):
+    body = """
+def serve():
+    items = []
+    items.append('/etc/hostname')
+    return open(items[0], 'rb')
+"""
+    findings = _scan(tmp_path, body)
+    pt = [f for f in findings if f["bug_class"] == "path_traversal_unguarded_join"]
+    assert pt == [], f"literal-only append must not flag, got {pt}"
+
+
 # --- regression on existing seeded fixtures --------------------------------
 
 
