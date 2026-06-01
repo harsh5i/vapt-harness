@@ -90,3 +90,18 @@ subprocess).
 
 Avoid "autonomous 0day engine" framing. Accurate label:
 **evidence-gated vulnerability research harness for authorized assessment.**
+
+## Stress evidence (2026-06-01)
+
+Run alongside the partial -> implemented push to verify the harness holds
+under load.
+
+| Dimension | Workload | Result |
+|---|---|---|
+| AST walker scale | Django HEAD, 2,911 .py files, ~520K LOC | 31.5s, 234 findings, 1 graceful parse_error on an intentional syntax-error fixture (no crash) |
+| AST walker extreme | CPython HEAD, 2,275 .py files, ~1.1M LOC | 70s, 514 findings + structured parse_error degradation for files using 3.15-dev syntax beyond the local interpreter |
+| ROE gate matrix | 4 URLs (in-scope localhost, out_of_scope 127.0.0.1, two undeclared hosts) x 4 scanners | 16/16 correct decisions: 4 allow, 12 deny with structured reasons |
+| Orchestration spine | `loop-integrity-check`, `intent-ordering-check`, `phase3-check`, `phase4-check` | all green; 3/3 loop fixtures + intent-distinct-top + advisory + commit_diff queue parity |
+| Concurrent wrappers | 4 wrappers (jwt + screenshot + 2 scope-checks) running in parallel | 3.67s wall, no file-lock contention, all artifacts written |
+| Cross-platform CI | ubuntu-latest + macos-latest + windows-latest x Python 3.11 + 3.12 | 6/6 jobs green in 1m42s on push of `e1ef4aa` |
+| Full unit suite | `pytest vapt/harness/tests/` (default + `VAPT_REALWORLD=1`) | 124/124 green in 7.7s (121 default + 3 opt-in real-world against bottle/flask/werkzeug) |
