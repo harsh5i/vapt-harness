@@ -44,6 +44,12 @@ engagement/
 # lives in STATUS.md, README.md, CHEATSHEET.md, and vapt/ONBOARDING.md.
 vapt/management/
 
+# Knowledge base: case studies, lessons, vuln-class doctrine, program intel,
+# novel-approaches registry. Stays local on the operator's machine. The
+# harness reads this dir at runtime but does not require it to function;
+# fresh clones start with an empty KB.
+vapt/harness/knowledge/
+
 # Outdated single-file harness export. Superseded by README + STATUS +
 # CHEATSHEET + ONBOARDING.
 vapt/harness/exports/
