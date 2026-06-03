@@ -1,59 +1,70 @@
 """postMessage origin-check probe.
 
-Doctrine-check gate. Future active-scanner work:
+Active static scanner. Walks JS source under ``ctx.target.local_path``,
+locates ``addEventListener("message", ...)`` and ``onmessage = ...``
+registrations, and emits one finding per handler whose origin check is
+missing or weak.
 
-- Static: parse JS bundles for every
-  `addEventListener("message", handler)` and `window.onmessage = ...`.
-  Inspect handler body for origin check pattern.
-- Flag: missing origin check; substring / prefix / suffix match instead
-  of full-equality (`===`); regex with unescaped dot; allowlist
-  containing wildcard subdomain; `event.origin` not referenced.
-- Dynamic (Playwright): inject hook before page load, dump every
-  registered handler's source + observed origin checks.
-- Cross-reference against
-  `knowledge/case_studies/postmessage_origin.md` (Frans Rosén pattern).
+Two finding kinds:
+  - ``no_origin_check``    -- handler body never references ``.origin``.
+  - ``weak_origin_check``  -- handler uses indexOf / includes / endsWith
+                              / startsWith / regex on ``event.origin``.
+
+Cross-reference: ``knowledge/case_studies/postmessage_origin.md``
+(Frans Rosén). Strong-equality checks (``=== / !==``) are filtered out
+as well-formed.
 """
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+from typing import Any
+
 from .base import Probe, ProbeContext, ProbeResult
+
+
+def _load_walker():
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from source.postmessage import PostMessageWalker  # noqa: WPS433
+    return PostMessageWalker
 
 
 class PostMessageOriginProbe(Probe):
     name = "postmessage_origin"
     vuln_class = "postmessage_origin"
     description = (
-        "Checks postMessage candidates for explicit handler, origin-check "
-        "pattern under test, and crossable boundary."
+        "Static scanner over JS/TS source. Flags postMessage handlers "
+        "without strict-equality origin checks (missing or weak)."
     )
 
     def run(self, ctx: ProbeContext) -> ProbeResult:
-        cand = ctx.candidate
-        text = " ".join(
-            str(cand.get(k, ""))
-            for k in ("title", "surface", "sink", "entrypoint", "attacker_control", "root_cause", "impact")
-        ).lower()
-        controls = str(cand.get("negative_controls", "")).lower()
-        missing = []
-        if not any(t in text for t in ("postmessage", "addeventlistener", "onmessage", "window.message")):
-            missing.append("postMessage handler not explicit")
-        if not any(t in text for t in ("origin", "source", "event.origin", "event.source", "targetorigin")):
-            missing.append("origin check pattern under test not described")
-        if not any(t in text for t in ("substring", "regex", "prefix", "suffix", "wildcard", "missing", "absent", "no check", "indexof", "endswith", "startswith")):
-            missing.append("specific bypass pattern (substring/regex/missing) not identified")
-        if not any(t in controls for t in ("benign", "rejected", "ignored", "expected origin")):
-            missing.append("benign-origin negative control missing")
-        if cand.get("proof") != "passed":
-            missing.append("proof has not passed")
-        return ProbeResult(
-            {
-                "probe": self.name,
-                "candidate_id": cand.get("id"),
-                "passed": not missing,
-                "missing": missing,
-                "recommended_next": (
-                    "Capture the handler source (bundle path + line), the "
-                    "exact origin-check pattern, an attacker-origin message "
-                    "demonstrating the bypass, and a benign-origin control."
-                ),
-            }
-        )
+        target = ctx.target or {}
+        local_path = target.get("local_path") or target.get("source_local_path")
+        if not local_path:
+            return ProbeResult({
+                "name": self.name,
+                "error": "target must carry local_path",
+                "finding_count": 0,
+                "findings": [],
+            })
+
+        root = Path(local_path)
+        if not root.exists():
+            return ProbeResult({
+                "name": self.name,
+                "error": f"local_path does not exist: {root}",
+                "finding_count": 0,
+                "findings": [],
+            })
+
+        knobs: dict[str, Any] = ctx.knobs or {}
+        max_files = knobs.get("max_files")
+
+        walker_cls = _load_walker()
+        findings = walker_cls().walk(root, max_files=max_files)
+        return ProbeResult({
+            "name": self.name,
+            "candidate_id": ctx.candidate.get("id") if ctx.candidate else None,
+            "finding_count": len(findings),
+            "findings": findings,
+        })

@@ -1,58 +1,78 @@
 """JS bundle analyzer probe.
 
-Doctrine-check gate. Future active-scanner work:
+Active static scanner. Consumes the target's JS source (or built bundles)
+via `ctx.target.local_path` and emits high-recall hypothesis candidates:
 
-- Discover JS bundle / source-map artifacts under target origin.
-- Parse with esprima / acorn / a regex sweep for: string literals
-  matching URL/path patterns, key patterns (`/^A[K]IA/`, `/sk_live_/`),
-  hidden API route maps, JSON config blobs, GraphQL schema fragments.
-- Output: hidden-endpoint inventory + secret-candidate list with
-  bundle file + line/column citations.
-- Cross-reference against
-  `knowledge/case_studies/web_hackers_vs_auto.md` — auto-industry
-  team's primary recon technique was JS bundle URL enumeration.
+    {file, line, kind, match, [secret_class]}
+
+Three finding kinds: ``endpoint`` (root-relative /api/... paths),
+``admin_route`` (admin/internal routes -- highest EV), ``secret``
+(high-confidence credential patterns; placeholder and test-file
+suppression built in).
+
+This probe surfaces leads; it does not decide exploitability. An operator
+or LLM auditor must confirm each finding via a live fetch, server-side
+authz check, or git-blame.
+
+Cross-reference: knowledge/case_studies/web_hackers_vs_auto.md -- JS
+bundle URL enumeration was the auto-industry team's primary recon
+technique.
 """
 from __future__ import annotations
+
+import sys
+from pathlib import Path
+from typing import Any
 
 from .base import Probe, ProbeContext, ProbeResult
 
 
-class JSBundleAnalyzerProbe(Probe):
+def _load_analyzer():
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from source.js_bundle import JsBundleAnalyzer  # noqa: WPS433
+    return JsBundleAnalyzer
+
+
+class JsBundleAnalyzerProbe(Probe):
     name = "js_bundle_analyzer"
     vuln_class = "js_bundle_surface"
     description = (
-        "Checks JS-bundle-derived candidates for explicit bundle source, "
-        "extracted artifact, and reachable endpoint or live secret."
+        "Static scanner over JS/TS source. Surfaces /api endpoints, admin "
+        "routes, and high-confidence secret patterns as hypothesis findings."
     )
 
     def run(self, ctx: ProbeContext) -> ProbeResult:
-        cand = ctx.candidate
-        text = " ".join(
-            str(cand.get(k, ""))
-            for k in ("title", "surface", "sink", "entrypoint", "attacker_control", "root_cause", "impact")
-        ).lower()
-        artifacts = str(cand.get("artifacts", "")).lower()
-        missing = []
-        if not any(t in text for t in ("bundle", "webpack", "vite", "rollup", "source map", "js", "javascript", "chunk")):
-            missing.append("bundle source not explicit")
-        if not any(t in text for t in ("endpoint", "route", "url", "api", "key", "secret", "token", "config")):
-            missing.append("extracted artifact type not described")
-        if not any(t in artifacts for t in ("bundle", "js", ".map", "chunk")) and not any(t in text for t in ("citation", "line", "column", "file")):
-            missing.append("bundle file + position citation missing")
-        if not any(t in text for t in ("reachable", "live", "200", "responded", "valid", "loaded")):
-            missing.append("reachability / liveness evidence not captured")
-        if cand.get("proof") != "passed":
-            missing.append("proof has not passed")
-        return ProbeResult(
-            {
-                "probe": self.name,
-                "candidate_id": cand.get("id"),
-                "passed": not missing,
-                "missing": missing,
-                "recommended_next": (
-                    "Capture bundle file path + line citation for the extracted "
-                    "URL / secret, plus a live-fetch / API-call confirming it "
-                    "responds. Strip false-positive lookalikes."
-                ),
-            }
-        )
+        target = ctx.target or {}
+        local_path = target.get("local_path") or target.get("source_local_path")
+        if not local_path:
+            return ProbeResult({
+                "name": self.name,
+                "error": "target must carry local_path",
+                "finding_count": 0,
+                "findings": [],
+            })
+
+        root = Path(local_path)
+        if not root.exists():
+            return ProbeResult({
+                "name": self.name,
+                "error": f"local_path does not exist: {root}",
+                "finding_count": 0,
+                "findings": [],
+            })
+
+        knobs: dict[str, Any] = ctx.knobs or {}
+        max_files = knobs.get("max_files")
+
+        analyzer_cls = _load_analyzer()
+        findings = analyzer_cls().walk(root, max_files=max_files)
+        return ProbeResult({
+            "name": self.name,
+            "candidate_id": ctx.candidate.get("id") if ctx.candidate else None,
+            "finding_count": len(findings),
+            "findings": findings,
+        })
+
+
+# Backwards-compat alias for the legacy registry key (harness.py PROBE_REGISTRY).
+JSBundleAnalyzerProbe = JsBundleAnalyzerProbe
