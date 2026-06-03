@@ -89,6 +89,31 @@ def test_parses_package_lock_v1_nested(parser, tmp_path):
     assert deps["express"].dev is True
 
 
+def test_yarn_alias_resolves_to_real_package(parser, tmp_path):
+    # yarn berry alias syntax: `localName@npm:realName@version` MUST emit
+    # the real (name, version), otherwise OSV cache lookups match on the
+    # alias and produce false positives (e.g. GitLab aliasing
+    # `vue-loader` as `vue-loader-vue3` looked like the malicious
+    # vue-loader-vue3 1.0.0 package per OSV MAL-2025-257).
+    text = textwrap.dedent('''
+        "vue-loader-vue3@npm:vue-loader@17.4.2":
+          version "17.4.2"
+          resolved "https://registry.yarnpkg.com/vue-loader/-/vue-loader-17.4.2.tgz"
+
+        "ember-foo@npm:@scope/real-pkg@2.1.0":
+          version "2.1.0"
+          resolved "https://registry.yarnpkg.com/@scope/real-pkg/-/real-pkg-2.1.0.tgz"
+    ''').strip()
+    f = tmp_path / "yarn.lock"
+    f.write_text(text, encoding="utf-8")
+    deps = {(d.name, d.version) for d in parser.parse(f)}
+    assert ("vue-loader", "17.4.2") in deps
+    assert ("@scope/real-pkg", "2.1.0") in deps
+    # Crucially the alias name must NOT leak in:
+    assert not any(name == "vue-loader-vue3" for name, _ in deps)
+    assert not any(name == "ember-foo" for name, _ in deps)
+
+
 def test_parses_pnpm_lock_v9(parser, tmp_path):
     text = textwrap.dedent('''
         lockfileVersion: '9.0'

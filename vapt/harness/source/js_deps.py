@@ -173,10 +173,23 @@ class LockfileParser:
                     out.append(Dep(name=current_name, version=current_version, dev=False))
                     current_version = None
                 header = stripped.rstrip(":")
-                # First spec: ``"pkg@spec"`` or ``pkg@spec``
-                first_spec = header.split(",")[0].strip()
-                m = _YARN_HEADER_RE.match(first_spec)
-                current_name = _yarn_unquote(m.group("name")) if m else None
+                # First spec: ``"pkg@spec"`` or ``pkg@spec``.
+                first_spec = _yarn_unquote(header.split(",")[0].strip())
+                # Yarn-berry alias form: ``localName@npm:realName@range``.
+                # The ``@npm:`` marker means the local name is just an
+                # import alias; the real package is everything between
+                # ``@npm:`` and the trailing ``@<range>``. OSV cache
+                # lookups must use the REAL package name (otherwise an
+                # alias collides with a malicious package of the same
+                # local name -- see MAL-2025-257 false positive on
+                # GitLab's `vue-loader-vue3` alias of `vue-loader`).
+                if "@npm:" in first_spec:
+                    after_marker = first_spec.split("@npm:", 1)[1]
+                    real_name, _, _range = after_marker.rpartition("@")
+                    current_name = real_name or None
+                else:
+                    m = _YARN_HEADER_RE.match(first_spec)
+                    current_name = _yarn_unquote(m.group("name")) if m else None
                 current_version = None
                 continue
             # Body line: `  version "1.2.3"`
