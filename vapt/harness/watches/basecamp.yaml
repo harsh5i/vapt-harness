@@ -1,0 +1,18 @@
+target_id: basecamp
+poll_interval_minutes: 120
+trigger_patterns:
+  - authz_boundary
+  - mass_assignment
+  - ssrf_outbound
+  - parser_canonicalization
+sources:
+  - kind: github_releases
+    repo: basecamp/once-campfire
+  - kind: github_commits
+    repo: basecamp/once-campfire
+    branch: main
+  - kind: github_releases
+    repo: basecamp/writebook
+  - kind: github_commits
+    repo: basecamp/writebook
+    branch: main

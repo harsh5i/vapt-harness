@@ -1,0 +1,18 @@
+target_id: discourse
+poll_interval_minutes: 60
+trigger_patterns:
+  - authz_boundary
+  - ssrf_outbound
+  - parser_canonicalization
+  - upload_polyglot
+  - sso_drift
+sources:
+  - kind: github_releases
+    repo: discourse/discourse
+  - kind: github_commits
+    repo: discourse/discourse
+    branch: main
+  - kind: ghsa_advisories
+    ecosystem: RubyGems
+    package: discourse
+    allow_network: true

@@ -53,6 +53,12 @@ from typing import Any
 UNTRUSTED_VAR_HINTS = {
     "request", "req", "args", "params", "payload", "body", "data",
     "input", "user_input", "form", "query", "kwargs", "json_body",
+    # Header / cookie / WSGI environ surfaces (B#16, MOVEit-derived):
+    # standalone names that show up as function params or destructured
+    # locals, not always reached via a `request.` prefix.
+    "headers", "header", "cookies", "cookie", "environ", "meta",
+    # Upload surfaces (B#5 upload+polyglot doctrine):
+    "multipart", "files", "uploaded", "attachment", "upload",
 }
 
 

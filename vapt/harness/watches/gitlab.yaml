@@ -1,0 +1,23 @@
+target_id: gitlab
+poll_interval_minutes: 60
+trigger_patterns:
+  - authz_boundary
+  - graphql_authz
+  - ssrf_outbound
+  - serialization_rce
+  - parser_canonicalization
+  - oauth_flow
+sources:
+  - kind: github_releases
+    repo: gitlabhq/gitlabhq
+  - kind: github_commits
+    repo: gitlabhq/gitlabhq
+    branch: master
+  - kind: ghsa_advisories
+    ecosystem: ""
+    package: gitlab
+    allow_network: true
+  - kind: osv_advisories
+    ecosystem: ""
+    package: gitlab
+    allow_network: true

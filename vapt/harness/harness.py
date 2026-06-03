@@ -1044,6 +1044,36 @@ PROBE_REGISTRY = {
             "absolute path",
         ],
     },
+    "oauth_flow": {
+        "module": "oauth_flow",
+        "class": "OAuthFlowProbe",
+        "vuln_class": "oauth_flow",
+        "terms": ["oauth", "oidc", "authorize", "redirect_uri", "response_mode", "state", "prompt", "token endpoint"],
+    },
+    "mass_assignment": {
+        "module": "mass_assignment",
+        "class": "MassAssignmentProbe",
+        "vuln_class": "mass_assignment",
+        "terms": ["mass assignment", "strong_parameters", "permit", "is_admin", "role", "binding", "patch", "profile"],
+    },
+    "js_bundle_analyzer": {
+        "module": "js_bundle_analyzer",
+        "class": "JSBundleAnalyzerProbe",
+        "vuln_class": "js_bundle_surface",
+        "terms": ["bundle", "webpack", "vite", "rollup", "source map", "hidden endpoint", "leaked key"],
+    },
+    "postmessage_origin": {
+        "module": "postmessage_origin",
+        "class": "PostMessageOriginProbe",
+        "vuln_class": "postmessage_origin",
+        "terms": ["postmessage", "addeventlistener", "onmessage", "origin", "event.origin", "targetorigin"],
+    },
+    "upload_polyglot": {
+        "module": "upload_polyglot",
+        "class": "UploadPolyglotProbe",
+        "vuln_class": "upload_polyglot",
+        "terms": ["upload", "multipart", "exiftool", "imagemagick", "polyglot", "djvu", "jbig2", "ffmpeg", "svg", "xxe"],
+    },
 }
 
 
